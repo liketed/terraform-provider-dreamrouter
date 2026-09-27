@@ -1,0 +1,7 @@
+/terraform-provider-dreamrouter
+# Terraform working files in examples
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
