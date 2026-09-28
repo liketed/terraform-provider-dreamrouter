@@ -1,0 +1,60 @@
+---
+page_title: "{{.Name}} {{.Type}} - {{.RenderedProviderName}}"
+subcategory: ""
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{.Name}} ({{.Type}})
+
+{{ .Description | trimspace }}
+
+Changes to `value`, `ttl`, `priority`, `weight`, `port` and `enabled` are made in place;
+changing `type` or `name` replaces the record. A record edited in the web UI is changed
+back on the next apply, and one deleted there is recreated.
+
+## Record types
+
+What `value` means for each type, and the router's rules, which the provider checks during
+`plan`:
+
+| Type | `value` | Other arguments | Notes |
+|---|---|---|---|
+| `A` | IPv4 address | `ttl` | Several A records may share a name (round robin). |
+| `AAAA` | IPv6 address | `ttl` | |
+| `CNAME` | Target hostname | `ttl` | Can't share its name with another record or point to itself. |
+| `MX` | Mail server hostname | `priority` | |
+| `NS` | **IP address** of a DNS server | | The router implements NS records as conditional forwarders: queries for the name and its subdomains are forwarded to that server. |
+| `SRV` | Target hostname | `priority`, `weight`, `port` | `name` must be `_service._protocol.domain`, e.g. `_sip._tcp.home.internal`. |
+| `TXT` | Text | | Double quotes only around the whole value; at most 255 characters per line. |
+
+`ttl` is in seconds; `0` (the default) means automatic.
+
+{{ if .HasExamples -}}
+## Example Usage
+
+{{- range .ExampleFiles }}
+
+{{ tffile . }}
+{{- end }}
+{{- end }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+## Import
+
+Import a record by `TYPE/name`, or `TYPE/name/value` when several records share a type and
+name. The router's record ID is also accepted. If you create a record that already exists,
+the error message shows the import command to use.
+{{- if .HasImportIDConfig }}
+
+In Terraform v1.5.0 and later, the [`import` block](https://developer.hashicorp.com/terraform/language/import) can be used with the `id` attribute, for example:
+
+{{tffile .ImportIDConfigFile }}
+{{- end }}
+{{- if .HasImport }}
+
+The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/commands/import) can be used, for example:
+
+{{codefile "shell" .ImportFile }}
+{{- end }}

@@ -2,6 +2,13 @@
 // static DNS records on a UniFi Dream Router 7 or other UniFi OS gateway.
 package main
 
+// Regenerate docs/ from the provider schema, examples/ and templates/:
+//
+//	go generate ./...
+//
+//go:generate terraform fmt -recursive ./examples/
+//go:generate go tool tfplugindocs generate --provider-name dreamrouter --rendered-provider-name "Dream Router"
+
 import (
 	"context"
 	"flag"

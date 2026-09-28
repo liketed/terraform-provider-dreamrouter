@@ -1,15 +1,22 @@
-# Terraform provider for Dream Router 7 DNS
+# Terraform provider for Dream Router 7 DNS and DHCP
 
-Manage the static DNS records of a UniFi Dream Router 7 (or other UniFi OS gateway)
-with Terraform or OpenTofu.
+Manage a UniFi Dream Router 7's (or other UniFi OS gateway's) local network settings with
+Terraform or OpenTofu:
 
-Records are managed through the UniFi Network application's own API, so they are the
-same as records added under **Settings → Routing → DNS** in the web UI: they appear
-there, survive reboots and firmware updates, and reach the router's DNS server
-(dnsmasq) within about 10–20 seconds of an apply.
+- **Static DNS records** (`dreamrouter_dns_record`) of every type the router supports:
+  **A, AAAA, CNAME, MX, NS, SRV and TXT**.
+- **DHCP reservations** (`dreamrouter_dhcp_reservation`): fixed IP addresses for devices.
+- **Hosts** (`dreamrouter_host`): a device's fixed IP and its DNS name, managed together.
+- Data sources for the router's DNS names (`dreamrouter_dns_records`) and networks
+  (`dreamrouter_networks`).
 
-All record types the router supports are available: **A, AAAA, CNAME, MX, NS, SRV
-and TXT**.
+Everything is managed through the UniFi Network application's own API, so it is the same
+as settings made in the web UI (**Settings → Routing → DNS**, and each client's fixed IP
+and local DNS record): it appears there, survives reboots and firmware updates, and
+reaches the router's DNS and DHCP server (dnsmasq) within about 10–20 seconds of an apply.
+
+The API client and validation are shared with the [drctl](https://github.com/liketed/drctl)
+command-line tool, in [dreamrouter-go](https://github.com/liketed/dreamrouter-go).
 
 ## Requirements
 
@@ -61,8 +68,10 @@ terraform {
 With `dev_overrides` there is no need to run `terraform init` for this provider, and
 Terraform prints a warning that development overrides are in effect, which is expected.
 Without the `dev_overrides` entry, `terraform init` tries to download
-`liketed/dreamrouter` from the Terraform Registry and fails, because it isn't published
-there. After changing the code, rebuild (or re-run `go install`) and the next `plan`
+`liketed/dreamrouter` from the Terraform Registry and fails until it is published there.
+Once it is published (see [Releasing](#releasing)), `terraform init` / `tofu init`
+installs it like any other provider and `dev_overrides` is only needed for local
+development. After changing the code, rebuild (or re-run `go install`) and the next `plan`
 uses the new binary.
 
 ## Provider configuration
@@ -200,7 +209,7 @@ web UI is changed back in place; a record deleted in the web UI is recreated.
 ### Several Terraform projects, and records created elsewhere
 
 Each project only manages the records in its own state. Records created by other
-Terraform projects, in the web UI, or with the command-line scripts are left alone:
+Terraform projects, in the web UI, or with drctl are left alone:
 they don't appear in `plan`, aren't warned about, and are never changed or deleted,
 including by `terraform destroy`. Several projects can therefore share one router, and
 can even use the same name with different record types or values (e.g. an A record in
@@ -214,17 +223,82 @@ A given record (same type, name and value) should belong to **one** project:
 - Don't `terraform import` a record that another project manages. Both projects would
   then own it, and destroying either one would delete it for both.
 
+A static record can't use a name that is already a device's DNS name (see
+[`dreamrouter_host`](#resource-dreamrouter_host)); the apply fails with an error saying so.
+
+## Resource: `dreamrouter_dhcp_reservation`
+
+A fixed IP address for a device, identified by its MAC address.
+
+```hcl
+resource "dreamrouter_dhcp_reservation" "printer" {
+  mac  = "aa:bb:cc:dd:ee:02"
+  ip   = "192.168.1.60"
+  name = "printer"   # optional: the name shown in the web UI
+}
+```
+
+| Argument | Required | Notes |
+|---|---|---|
+| `mac` | yes | Lower-case colon form, `aa:bb:cc:dd:ee:ff` (the form the router uses; other forms are rejected with the correct spelling). Changing it replaces the reservation. |
+| `ip` | yes | Must be in one of the router's networks, not the router's own, network or broadcast address, and not reserved for another device. Changed in place. |
+| `name` | no | Device name shown in the web UI. If not set, a device the router already knows keeps its name. |
+| `network_id` | no | Network the IP belongs to (see [`dreamrouter_networks`](#data-source-dreamrouter_networks)). Defaults to the network whose subnet contains `ip`. |
+| `forget_on_destroy` | no | Default `false`: destroy removes only the reservation and keeps the device (its name and history). `true` removes the device from the router entirely. |
+
+- A device the router doesn't know yet (never connected) is created with the reservation.
+- The provider **won't take over a device that already has a reservation** (made in the
+  web UI, with drctl, or by another project). The apply fails and shows the
+  `terraform import` command to use if nothing else manages it.
+- If another device currently uses the IP, the apply warns: that device gets another
+  address when its lease renews.
+- Drift: a changed IP is set back; a reservation removed in the web UI is recreated.
+- Import by MAC address: `terraform import dreamrouter_dhcp_reservation.printer aa:bb:cc:dd:ee:02`.
+
+## Resource: `dreamrouter_host`
+
+A device with a fixed IP address **and** a DNS name. The router serves the name like an A
+record, but stores it on the device and only serves it while the device has a fixed IP,
+so the two are managed together.
+
+```hcl
+resource "dreamrouter_host" "nas" {
+  name = "nas.home.internal"
+  ip   = "192.168.1.50"
+  mac  = "aa:bb:cc:dd:ee:01"
+}
+
+resource "dreamrouter_dns_record" "files" {
+  type  = "CNAME"
+  name  = "files.home.internal"
+  value = dreamrouter_host.nas.name
+}
+```
+
+`ip`, `mac`, `network_id` and `forget_on_destroy` work as for
+`dreamrouter_dhcp_reservation`. `name` is the DNS name; changing it renames the host in
+place. It can't be a static DNS record's name or another device's DNS name: the apply
+fails and says which record is in the way. `device_name` sets the name shown in the web
+UI; a new device is labelled with the host name.
+
+Use either `dreamrouter_host` or `dreamrouter_dhcp_reservation` for a device, not both.
+Drift: a changed IP or name is set back, a DNS name turned off in the web UI is turned
+back on, and a removed reservation is recreated. Import by host name (or MAC address):
+`terraform import dreamrouter_host.nas nas.home.internal`.
+
 ## Data source: `dreamrouter_dns_records`
 
-Lists records on the router, including ones Terraform doesn't manage. It is read-only:
-listing a record doesn't make the project manage it.
+Lists the names the router answers for: static DNS records and devices' DNS names,
+including ones Terraform doesn't manage. It is read-only: listing a record doesn't make
+the project manage it.
 
 ```hcl
 data "dreamrouter_dns_records" "all" {}
 
 data "dreamrouter_dns_records" "mail" {
-  type = "MX"             # optional filter
-  name = "home.internal"  # optional filter, exact match
+  type        = "MX"             # optional filter
+  name        = "home.internal"  # optional filter, exact match
+  static_only = true             # optional: leave out devices' DNS names
 }
 
 output "all_records" {
@@ -233,7 +307,29 @@ output "all_records" {
 ```
 
 Each entry in `records` has `id`, `type`, `name`, `value`, `ttl`, `priority`, `weight`,
-`port` and `enabled`, sorted by name, type and value.
+`port`, `enabled`, `source` and `mac`, sorted by name, type and value. `source` is
+`"static"` for a static record, or `"host"` for a device's DNS name (type `A`, with the
+device's `mac`).
+
+## Data source: `dreamrouter_networks`
+
+Lists the router's networks, e.g. to find the `network_id` for a reservation on a
+network other than the default.
+
+```hcl
+data "dreamrouter_networks" "iot" {
+  name = "IoT"   # optional; fails if there is no such network
+}
+
+resource "dreamrouter_dhcp_reservation" "sensor" {
+  mac        = "aa:bb:cc:dd:ee:20"
+  ip         = "10.0.20.5"
+  network_id = data.dreamrouter_networks.iot.networks[0].id
+}
+```
+
+Each entry in `networks` has `id`, `name`, `purpose`, `subnet` (e.g. `192.168.1.1/24`),
+`vlan`, `dhcp_enabled`, `dhcp_start`, `dhcp_stop` and `domain_name`.
 
 ## Login limit
 
@@ -257,11 +353,11 @@ plan followed by an apply fits comfortably within the default limit.
 **When the limit is reached**, the router answers the login with HTTP 429. The provider
 then waits and retries (after 5 s, 10 s, then every 20 s) for up to `login_retry_timeout`
 (default `2m`). The router's window is one minute, so a burst of commands slows down
-instead of failing. Each wait is logged as a warning, with the attempt number, the wait and the timeout as
-fields (Terraform adds a timestamp and some internal fields):
+instead of failing. Each wait is logged as a warning (Terraform adds a timestamp and some
+internal fields):
 
 ```
-2026-09-27T20:23:57.796+0100 [WARN]  provider.terraform-provider-dreamrouter: router login limit reached, retrying: ... attempt=1 host=https://192.168.1.1 retry_timeout=2m0s wait=5s
+2026-09-27T20:23:57.796+0100 [WARN]  provider.terraform-provider-dreamrouter: router login limit reached, retrying in 5s: ...
 ```
 
 Terraform only shows provider logs when asked, e.g. `TF_LOG_PROVIDER=WARN terraform apply`.
@@ -281,18 +377,18 @@ If the limit is still reached when `login_retry_timeout` runs out, or immediatel
 pointer to the setting above. A wrong password is never retried.
 
 If you routinely run many commands in quick succession (scripts, CI, the acceptance
-tests), consider raising the limit on the router. The command-line scripts' README
-describes how.
+tests), consider raising the limit on the router. The
+[drctl README](https://github.com/liketed/drctl#login-rate-limiting) describes how.
 
 ## How it talks to the router
 
 - **One login per Terraform command,** retried if the login limit is reached; see
   [Login limit](#login-limit). The provider logs in again automatically if the session
   expires.
-- **One list call per command, shared.** The API has no way to fetch a single record, so
-  reading means listing all records. The provider lists once, shares the result between
-  all resources, and refreshes it after each change it makes. Listing 1000 records takes
-  about 0.2 s.
+- **One list call per command, shared.** The API has no way to fetch a single record or
+  device, so reading means listing them all. The provider lists once, shares the result
+  between all resources, and refreshes it after each change it makes. Listing 1000
+  records takes about 0.2 s.
 - **Changes are sent one at a time.** Each change makes the Network application rebuild
   and push the DNS configuration to the router; sending them one after another avoids
   overlapping provisioning runs. Each takes about 60 ms, so 50 records apply in a few
@@ -313,12 +409,14 @@ go vet ./... && gofmt -l .
 ```
 
 The unit tests need the `terraform` binary on `PATH` (they run real Terraform commands
-against the provider) but no network access. `internal/fakerouter` mimics the router's
-API, including its error codes, session handling and login limit.
+against the provider) but no network access. They use the in-memory fake router from
+[dreamrouter-go](https://github.com/liketed/dreamrouter-go)'s `fakerouter` package, which
+mimics the router's API, including its error codes, session handling and login limit.
 
 Acceptance tests run against a real router and only when `TF_ACC=1` is set. They create
-temporary records under `acc.tftest.internal`, check that the router's DNS server
-answers for each record type, and destroy them at the end:
+temporary records under `acc.tftest.internal` and a reservation and a host for made-up
+MAC addresses (`02:00:00:dd:cc:1x`, removed entirely afterwards), check that the router's
+DNS server answers for them, and destroy them at the end:
 
 ```bash
 DREAMROUTER_PASSWORD=... TF_ACC=1 go test ./internal/provider -run TestAcc -v
@@ -336,10 +434,61 @@ Layout:
 | Path | Contents |
 |---|---|
 | `main.go` | Provider entry point (source address `liketed/dreamrouter`). |
-| `internal/client` | API client: login, session, CSRF, cached listing, serialised writes. |
-| `internal/provider` | Provider, resource, data source, per-type validation, tests. |
-| `internal/fakerouter` | In-memory fake of the router's API for tests. |
+| `internal/provider` | Provider, resources, data sources and tests. The API client, validation and fake router come from [dreamrouter-go](https://github.com/liketed/dreamrouter-go). |
 | `examples/basic` | Example configuration using every record type. |
+| `examples/provider`, `examples/resources`, `examples/data-sources` | Examples used in the generated docs. |
+| `templates/` | Doc templates for the provider and resource pages. |
+| `docs/` | Generated registry documentation (don't edit by hand; see below). |
+| `terraform-registry-manifest.json` | Declares plugin protocol 6.0 for the registries. |
+| `.goreleaser.yml` | Release build: zips per OS/arch, `SHA256SUMS` and its GPG signature. |
+| `.github/workflows/` | `test.yml` (build, vet, format, unit tests, docs check) and `release.yml` (publish on `v*` tags). |
+
+### Documentation
+
+`docs/` is generated by [tfplugindocs](https://github.com/hashicorp/terraform-plugin-docs)
+(pinned as a Go tool dependency in `go.mod`) from the schema descriptions in the code,
+`examples/` and `templates/`. After changing any of those, regenerate and commit the result:
+
+```bash
+go generate ./...
+go tool tfplugindocs validate --provider-name dreamrouter
+```
+
+The Test workflow fails if `docs/` is out of date.
+
+## Releasing
+
+Releases are built and signed by GitHub Actions when a version tag is pushed. The
+Terraform and OpenTofu registries pick them up from GitHub.
+
+One-time setup:
+
+1. Create an **RSA** GPG key for signing (the Terraform Registry doesn't accept ECC keys):
+   `gpg --full-generate-key`, choosing RSA and RSA, 4096 bits.
+2. In the GitHub repository, under Settings → Secrets and variables → Actions, add:
+   - `GPG_PRIVATE_KEY`: the output of `gpg --armor --export-secret-keys <key-id>`
+   - `PASSPHRASE`: the key's passphrase
+3. Terraform Registry: sign in to registry.terraform.io with GitHub, add the public key
+   (`gpg --armor --export <key-id>`) under User Settings → Signing Keys, then
+   Publish → Provider and choose this repository.
+4. OpenTofu Registry: open a "Submit new provider" issue in the
+   [opentofu/registry](https://github.com/opentofu/registry) repository, and optionally a
+   "Submit new provider signing key" issue with the public key.
+
+To release, tag a semantic version with a `v` prefix and push it:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The Release workflow builds zips for macOS, Linux, Windows and FreeBSD, signs the
+`SHA256SUMS` file, and publishes a GitHub release. To try the release build locally
+without signing or publishing:
+
+```bash
+goreleaser release --snapshot --clean --skip=sign,publish   # output in dist/
+```
 
 ## License
 

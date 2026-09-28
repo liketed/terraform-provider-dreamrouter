@@ -21,7 +21,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/liketed/terraform-provider-dreamrouter/internal/client"
+	"github.com/liketed/dreamrouter-go/unifi"
 )
 
 const accDomain = "acc.tftest.internal"
@@ -36,13 +36,12 @@ func accPreCheck(t *testing.T) {
 	}
 }
 
-func accClient(t *testing.T) *client.Client {
-	c, err := client.New(client.Config{
+func accClient(t *testing.T) *unifi.Client {
+	c, err := unifi.New(unifi.Config{
 		Host:               accHost(),
 		Username:           firstNonEmpty(os.Getenv("DREAMROUTER_USERNAME"), os.Getenv("UNIFI_USER"), defaultUsername),
 		Password:           firstNonEmpty(os.Getenv("DREAMROUTER_PASSWORD"), os.Getenv("UNIFI_PASS")),
 		InsecureSkipVerify: true,
-		CacheTTL:           time.Nanosecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +52,7 @@ func accClient(t *testing.T) *client.Client {
 // accCheckNoTestRecords fails if any acc.tftest.internal record is left on the router.
 func accCheckNoTestRecords(t *testing.T) resource.TestCheckFunc {
 	return func(*terraform.State) error {
-		records, err := accClient(t).List(context.Background())
+		records, err := accClient(t).ListDNS(context.Background())
 		if err != nil {
 			return err
 		}
@@ -210,6 +209,95 @@ func TestAccAllRecordTypes(t *testing.T) {
 				ImportState:       true,
 				ImportStateId:     "NS/lab." + accDomain,
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// accCheckNoTestDevices fails if a test device is left on the router.
+func accCheckNoTestDevices(t *testing.T) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		clients, err := accClient(t).ListClients(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, d := range clients {
+			if strings.HasPrefix(d.MAC, "02:00:00:dd:cc:1") {
+				return fmt.Errorf("test device left on router: %s %s", d.MAC, d.DisplayName())
+			}
+		}
+		return nil
+	}
+}
+
+func accReservationConfig(hostIP string) string {
+	return fmt.Sprintf(`
+provider "dreamrouter" {}
+
+data "dreamrouter_networks" "lan" {
+  name = "Default"
+}
+
+resource "dreamrouter_dhcp_reservation" "r" {
+  mac               = "02:00:00:dd:cc:11"
+  ip                = "192.168.1.248"
+  name              = "tftest-reservation"
+  network_id        = data.dreamrouter_networks.lan.networks[0].id
+  forget_on_destroy = true
+}
+
+resource "dreamrouter_host" "h" {
+  name              = "host.%[1]s"
+  ip                = %[2]q
+  mac               = "02:00:00:dd:cc:12"
+  forget_on_destroy = true
+}
+
+data "dreamrouter_dns_records" "hosts" {
+  name       = "host.%[1]s"
+  depends_on = [dreamrouter_host.h]
+}
+`, accDomain, hostIP)
+}
+
+func TestAccReservationsAndHosts(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		CheckDestroy:             resource.ComposeAggregateTestCheckFunc(accCheckNoTestDevices(t), accCheckNoTestRecords(t)),
+		Steps: []resource.TestStep{
+			{
+				Config: accReservationConfig("192.168.1.249"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrPair("dreamrouter_dhcp_reservation.r", "network_id", "data.dreamrouter_networks.lan", "networks.0.id"),
+					resource.TestCheckResourceAttr("dreamrouter_host.h", "device_name", "host."+accDomain),
+					resource.TestCheckResourceAttr("data.dreamrouter_dns_records.hosts", "records.0.source", "host"),
+					resource.TestCheckResourceAttr("data.dreamrouter_dns_records.hosts", "records.0.value", "192.168.1.249"),
+					accCheckResolves("A", "host."+accDomain, "192.168.1.249"),
+				),
+			},
+			{
+				// Moving the host is an in-place update, and DNS follows.
+				Config: accReservationConfig("192.168.1.247"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("dreamrouter_host.h", plancheck.ResourceActionUpdate),
+					plancheck.ExpectResourceAction("dreamrouter_dhcp_reservation.r", plancheck.ResourceActionNoop),
+				}},
+				Check: accCheckResolves("A", "host."+accDomain, "192.168.1.247"),
+			},
+			{
+				ResourceName:            "dreamrouter_host.h",
+				ImportState:             true,
+				ImportStateId:           "host." + accDomain,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"forget_on_destroy"},
+			},
+			{
+				ResourceName:            "dreamrouter_dhcp_reservation.r",
+				ImportState:             true,
+				ImportStateId:           "02:00:00:dd:cc:11",
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"forget_on_destroy"},
 			},
 		},
 	})

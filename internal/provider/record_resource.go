@@ -20,7 +20,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 
-	"github.com/liketed/terraform-provider-dreamrouter/internal/client"
+	"github.com/liketed/dreamrouter-go/check"
+	"github.com/liketed/dreamrouter-go/unifi"
 )
 
 var (
@@ -55,7 +56,7 @@ func (r *recordResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 	u16 := []validator.Int64{int64validator.Between(0, 65535)}
 	resp.Schema = schema.Schema{
 		Description: "A static DNS record on the router (Settings → Routing → DNS). " +
-			"Supported types: " + strings.Join(recordTypes, ", ") + ".",
+			"Supported types: " + strings.Join(check.RecordTypes, ", ") + ".",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:      true,
@@ -64,8 +65,8 @@ func (r *recordResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 			},
 			"type": schema.StringAttribute{
 				Required:      true,
-				Description:   "Record type: " + strings.Join(recordTypes, ", ") + ". Changing it replaces the record.",
-				Validators:    []validator.String{stringvalidator.OneOf(recordTypes...)},
+				Description:   "Record type: " + strings.Join(check.RecordTypes, ", ") + ". Changing it replaces the record.",
+				Validators:    []validator.String{stringvalidator.OneOf(check.RecordTypes...)},
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"name": schema.StringAttribute{
@@ -124,21 +125,18 @@ func (r *recordResource) ValidateConfig(ctx context.Context, req resource.Valida
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	in := recordInput{
+	problems := check.DNSProblems(check.DNSInput{
 		Type: knownString(cfg.Type), Name: knownString(cfg.Name), Value: knownString(cfg.Value),
-		Numbers: map[string]*int64{
-			"ttl": knownInt(cfg.TTL), "priority": knownInt(cfg.Priority),
-			"weight": knownInt(cfg.Weight), "port": knownInt(cfg.Port),
-		},
-	}
-	problems := validateRecord(in)
+		TTL: knownInt(cfg.TTL), Priority: knownInt(cfg.Priority), Weight: knownInt(cfg.Weight), Port: knownInt(cfg.Port),
+	})
+	delete(problems, "type") // the schema's OneOf validator reports unknown types
 	attrs := make([]string, 0, len(problems))
 	for a := range problems {
 		attrs = append(attrs, a)
 	}
 	sort.Strings(attrs)
 	for _, a := range attrs {
-		resp.Diagnostics.AddAttributeError(path.Root(a), "Invalid DNS record", a+" "+problems[a])
+		resp.Diagnostics.AddAttributeError(path.Root(a), "Invalid DNS record", problems[a])
 	}
 }
 
@@ -148,17 +146,21 @@ func (r *recordResource) Create(ctx context.Context, req resource.CreateRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	created, err := r.data.client.Create(ctx, toRecord(plan))
+	created, err := r.data.client.CreateDNS(ctx, toRecord(plan))
 	r.data.warnIfLoginWaited(&resp.Diagnostics)
 	if err != nil {
 		detail := err.Error()
-		if client.IsAlreadyExists(err) {
+		if unifi.HasCode(err, unifi.CodeDNSRecordAlreadyExists) {
 			detail += fmt.Sprintf("\n\nA %s record %q with this value already exists on the router. "+
 				"If another Terraform project manages it, remove it from this configuration instead: "+
 				"a record should be managed by only one project, because destroying either would delete it. "+
 				"If nothing else manages it, import it:\n  terraform import <address> %s/%s/%s",
 				plan.Type.ValueString(), plan.Name.ValueString(),
 				plan.Type.ValueString(), plan.Name.ValueString(), plan.Value.ValueString())
+		}
+		if unifi.HasCode(err, unifi.CodeDNSOverlapsWithDeviceName) {
+			detail += fmt.Sprintf("\n\n%q is already a device's DNS name (a dreamrouter_host, drctl host, or the "+
+				"device's local DNS record in the web UI). Remove it there first, or choose another name.", plan.Name.ValueString())
 		}
 		resp.Diagnostics.AddError("Error creating DNS record", detail)
 		return
@@ -172,9 +174,9 @@ func (r *recordResource) Read(ctx context.Context, req resource.ReadRequest, res
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	rec, err := r.data.client.Get(ctx, state.ID.ValueString())
+	rec, err := r.data.client.GetDNS(ctx, state.ID.ValueString())
 	r.data.warnIfLoginWaited(&resp.Diagnostics)
-	if client.IsNotFound(err) {
+	if unifi.IsNotFound(err) {
 		resp.State.RemoveResource(ctx) // deleted outside Terraform; plan will recreate it
 		return
 	}
@@ -194,7 +196,7 @@ func (r *recordResource) Update(ctx context.Context, req resource.UpdateRequest,
 	}
 	rec := toRecord(plan)
 	rec.ID = state.ID.ValueString()
-	updated, err := r.data.client.Update(ctx, rec)
+	updated, err := r.data.client.UpdateDNS(ctx, rec)
 	r.data.warnIfLoginWaited(&resp.Diagnostics)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating DNS record", err.Error())
@@ -209,9 +211,9 @@ func (r *recordResource) Delete(ctx context.Context, req resource.DeleteRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	err := r.data.client.Delete(ctx, state.ID.ValueString())
+	err := r.data.client.DeleteDNS(ctx, state.ID.ValueString())
 	r.data.warnIfLoginWaited(&resp.Diagnostics)
-	if err != nil && !client.IsNotFound(err) {
+	if err != nil && !unifi.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting DNS record", err.Error())
 	}
 }
@@ -229,13 +231,13 @@ func (r *recordResource) ImportState(ctx context.Context, req resource.ImportSta
 				`Use "TYPE/name" (e.g. "A/nas.home.internal"), "TYPE/name/value", or the router's record ID.`)
 			return
 		}
-		records, err := r.data.client.List(ctx)
+		records, err := r.data.client.ListDNS(ctx)
 		r.data.warnIfLoginWaited(&resp.Diagnostics)
 		if err != nil {
 			resp.Diagnostics.AddError("Error listing DNS records", err.Error())
 			return
 		}
-		var matches []client.Record
+		var matches []unifi.DNSRecord
 		for _, rec := range records {
 			if strings.EqualFold(rec.RecordType, parts[0]) && rec.Key == parts[1] &&
 				(len(parts) == 2 || rec.Value == parts[2]) {
@@ -262,8 +264,8 @@ func (r *recordResource) ImportState(ctx context.Context, req resource.ImportSta
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), id)...)
 }
 
-func toRecord(m recordModel) client.Record {
-	return client.Record{
+func toRecord(m recordModel) unifi.DNSRecord {
+	return unifi.DNSRecord{
 		ID:         m.ID.ValueString(),
 		RecordType: m.Type.ValueString(),
 		Key:        m.Name.ValueString(),
@@ -276,7 +278,7 @@ func toRecord(m recordModel) client.Record {
 	}
 }
 
-func fromRecord(r client.Record) recordModel {
+func fromRecord(r unifi.DNSRecord) recordModel {
 	return recordModel{
 		ID:       types.StringValue(r.ID),
 		Type:     types.StringValue(r.RecordType),

@@ -13,8 +13,8 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 
-	"github.com/liketed/terraform-provider-dreamrouter/internal/client"
-	"github.com/liketed/terraform-provider-dreamrouter/internal/fakerouter"
+	"github.com/liketed/dreamrouter-go/fakerouter"
+	"github.com/liketed/dreamrouter-go/unifi"
 )
 
 // useUpLogins makes the fake router refuse further logins, as if the
@@ -22,12 +22,12 @@ import (
 func useUpLogins(t *testing.T, r *fakerouter.Router) {
 	t.Helper()
 	r.SetLoginLimit(r.LoginCount() + 1)
-	c, err := client.New(client.Config{Host: r.Host(), Username: fakerouter.Username,
+	c, err := unifi.New(unifi.Config{Host: r.Host(), Username: fakerouter.Username,
 		Password: fakerouter.Password, InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.List(context.Background()); err != nil {
+	if _, err := c.ListDNS(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }
