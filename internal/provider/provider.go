@@ -19,7 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"github.com/liketed/terraform-provider-dreamrouter/internal/client"
+	"github.com/liketed/dreamrouter-go/unifi"
 )
 
 const (
@@ -47,7 +47,7 @@ type providerModel struct {
 
 // providerData is what resources and data sources receive from Configure.
 type providerData struct {
-	client         *client.Client
+	client         *unifi.Client
 	reportedWaited atomic.Bool
 }
 
@@ -75,9 +75,9 @@ func (p *dreamRouterProvider) Metadata(_ context.Context, _ provider.MetadataReq
 
 func (p *dreamRouterProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages static DNS records on a UniFi Dream Router 7 (or other UniFi OS gateway) " +
-			"through the UniFi Network application's API. Records are the same as those under " +
-			"Settings → Routing → DNS in the web UI.",
+		Description: "Manages static DNS records, DHCP reservations and device DNS names on a UniFi Dream " +
+			"Router 7 (or other UniFi OS gateway) through the UniFi Network application's API: the same " +
+			"settings as Settings → Routing → DNS and each client's fixed IP and local DNS record in the web UI.",
 		Attributes: map[string]schema.Attribute{
 			"host": schema.StringAttribute{
 				Optional: true,
@@ -159,15 +159,16 @@ func (p *dreamRouterProvider) Configure(ctx context.Context, req provider.Config
 		return
 	}
 
-	c, err := client.New(client.Config{
+	c, err := unifi.New(unifi.Config{
 		Host:               firstNonEmpty(cfg.Host.ValueString(), os.Getenv("DREAMROUTER_HOST"), defaultHost),
 		Site:               firstNonEmpty(cfg.Site.ValueString(), defaultSite),
 		Username:           firstNonEmpty(cfg.Username.ValueString(), os.Getenv("DREAMROUTER_USERNAME"), os.Getenv("UNIFI_USER"), defaultUsername),
 		Password:           password,
 		InsecureSkipVerify: insecure,
 		LoginRetryTimeout:  retryTimeout,
-		Logf: func(ctx context.Context, msg string, fields map[string]any) {
-			tflog.Warn(ctx, msg, fields)
+		CacheTTL:           30 * time.Second, // one plan/apply's reads share a record list
+		Logf: func(ctx context.Context, msg string) {
+			tflog.Warn(ctx, msg)
 		},
 	})
 	if err != nil {
@@ -180,11 +181,11 @@ func (p *dreamRouterProvider) Configure(ctx context.Context, req provider.Config
 }
 
 func (p *dreamRouterProvider) Resources(context.Context) []func() resource.Resource {
-	return []func() resource.Resource{newRecordResource}
+	return []func() resource.Resource{newRecordResource, newReservationResource, newHostResource}
 }
 
 func (p *dreamRouterProvider) DataSources(context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{newRecordsDataSource}
+	return []func() datasource.DataSource{newRecordsDataSource, newNetworksDataSource}
 }
 
 // parseTimeout accepts Go durations ("2m", "90s") and a bare "0".

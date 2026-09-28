@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/liketed/terraform-provider-dreamrouter/internal/fakerouter"
+	"github.com/liketed/dreamrouter-go/fakerouter"
 )
 
 // TestSeparateProjectsDoNotTouchEachOther runs the real terraform binary for
@@ -28,8 +28,8 @@ func TestSeparateProjectsDoNotTouchEachOther(t *testing.T) {
 	}
 	r := fakerouter.New()
 	defer r.Close()
-	r.Put(fakerouter.Record{RecordType: "A", Key: "ui.home.internal", Value: "192.168.1.5", Enabled: true})
-	r.Put(fakerouter.Record{RecordType: "CNAME", Key: "www.home.internal", Value: "ui.home.internal", Enabled: true})
+	r.PutDNS(fakerouter.DNSRecord{RecordType: "A", Key: "ui.home.internal", Value: "192.168.1.5", Enabled: true})
+	r.PutDNS(fakerouter.DNSRecord{RecordType: "CNAME", Key: "www.home.internal", Value: "ui.home.internal", Enabled: true})
 
 	tfrc := filepath.Join(binDir, "dev.tfrc")
 	writeFile(t, tfrc, fmt.Sprintf(`provider_installation {
@@ -88,7 +88,7 @@ resource "dreamrouter_dns_record" "nas_v6" {
 	}
 	stored := func() []string {
 		var keys []string
-		for _, rec := range r.Records() {
+		for _, rec := range r.DNS() {
 			keys = append(keys, rec.RecordType+" "+rec.Key)
 		}
 		sort.Strings(keys)

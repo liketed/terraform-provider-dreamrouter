@@ -71,6 +71,19 @@ resource "dreamrouter_dns_record" "lab" {
   value = "192.168.1.2"
 }
 
+# A device with a fixed IP and a DNS name.
+resource "dreamrouter_host" "tv" {
+  name = "tv.home.internal"
+  ip   = "192.168.1.80"
+  mac  = "aa:bb:cc:dd:ee:80"
+}
+
+# A fixed IP without a DNS name.
+resource "dreamrouter_dhcp_reservation" "printer" {
+  mac = "aa:bb:cc:dd:ee:60"
+  ip  = "192.168.1.61"
+}
+
 # Everything on the router, including records not managed here.
 data "dreamrouter_dns_records" "all" {}
 

@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/liketed/terraform-provider-dreamrouter/internal/fakerouter"
+	"github.com/liketed/dreamrouter-go/fakerouter"
 )
 
 var providerFactories = map[string]func() (tfprotov6.ProviderServer, error){
@@ -30,16 +30,16 @@ provider "dreamrouter" {
 }
 
 // findRecord returns the stored record with the given type and name.
-func findRecord(r *fakerouter.Router, typ, name string) (fakerouter.Record, bool) {
-	for _, rec := range r.Records() {
+func findRecord(r *fakerouter.Router, typ, name string) (fakerouter.DNSRecord, bool) {
+	for _, rec := range r.DNS() {
 		if rec.RecordType == typ && rec.Key == name {
 			return rec, true
 		}
 	}
-	return fakerouter.Record{}, false
+	return fakerouter.DNSRecord{}, false
 }
 
-func checkStored(r *fakerouter.Router, typ, name string, check func(fakerouter.Record) error) resource.TestCheckFunc {
+func checkStored(r *fakerouter.Router, typ, name string, check func(fakerouter.DNSRecord) error) resource.TestCheckFunc {
 	return func(*terraform.State) error {
 		rec, ok := findRecord(r, typ, name)
 		if !ok {
@@ -51,7 +51,7 @@ func checkStored(r *fakerouter.Router, typ, name string, check func(fakerouter.R
 
 func checkEmpty(r *fakerouter.Router) resource.TestCheckFunc {
 	return func(*terraform.State) error {
-		if n := len(r.Records()); n != 0 {
+		if n := len(r.DNS()); n != 0 {
 			return fmt.Errorf("%d records left on router after destroy", n)
 		}
 		return nil
@@ -119,20 +119,20 @@ resource "dreamrouter_dns_record" "txt" {
 					resource.TestCheckResourceAttr("dreamrouter_dns_record.a", "enabled", "true"),
 					resource.TestCheckResourceAttrSet("dreamrouter_dns_record.a", "id"),
 					resource.TestCheckResourceAttr("dreamrouter_dns_record.txt", "enabled", "false"),
-					checkStored(r, "SRV", "_sip._tcp.home.internal", func(rec fakerouter.Record) error {
+					checkStored(r, "SRV", "_sip._tcp.home.internal", func(rec fakerouter.DNSRecord) error {
 						if rec.Port != 5060 || rec.Priority != 10 || rec.Weight != 5 || rec.Value != "pbx.home.internal" {
 							return fmt.Errorf("SRV stored as %+v", rec)
 						}
 						return nil
 					}),
-					checkStored(r, "AAAA", "nas.home.internal", func(rec fakerouter.Record) error {
+					checkStored(r, "AAAA", "nas.home.internal", func(rec fakerouter.DNSRecord) error {
 						if rec.TTL != 300 {
 							return fmt.Errorf("AAAA ttl = %d", rec.TTL)
 						}
 						return nil
 					}),
 					func(*terraform.State) error {
-						if n := len(r.Records()); n != 7 {
+						if n := len(r.DNS()); n != 7 {
 							return fmt.Errorf("%d records stored, want 7", n)
 						}
 						return nil
@@ -152,7 +152,7 @@ resource "dreamrouter_dns_record" "txt" {
 				},
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("dreamrouter_dns_record.a", "value", "192.168.1.51"),
-					checkStored(r, "SRV", "_sip._tcp.home.internal", func(rec fakerouter.Record) error {
+					checkStored(r, "SRV", "_sip._tcp.home.internal", func(rec fakerouter.DNSRecord) error {
 						if rec.Port != 5061 {
 							return fmt.Errorf("SRV port = %d", rec.Port)
 						}
@@ -204,7 +204,7 @@ resource "dreamrouter_dns_record" "a" {
 				// Someone changes the IP in the web UI: Terraform puts it back in place.
 				PreConfig: func() {
 					rec, _ := findRecord(r, "A", "nas.home.internal")
-					r.Modify(rec.ID, func(x *fakerouter.Record) { x.Value = "192.168.1.99" })
+					r.ModifyDNS(rec.ID, func(x *fakerouter.DNSRecord) { x.Value = "192.168.1.99" })
 				},
 				Config: cfg,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
@@ -212,7 +212,7 @@ resource "dreamrouter_dns_record" "a" {
 						plancheck.ExpectResourceAction("dreamrouter_dns_record.a", plancheck.ResourceActionUpdate),
 					},
 				},
-				Check: checkStored(r, "A", "nas.home.internal", func(rec fakerouter.Record) error {
+				Check: checkStored(r, "A", "nas.home.internal", func(rec fakerouter.DNSRecord) error {
 					if rec.Value != "192.168.1.50" {
 						return fmt.Errorf("value = %s, want drift corrected", rec.Value)
 					}
@@ -223,7 +223,7 @@ resource "dreamrouter_dns_record" "a" {
 				// Someone deletes it in the web UI: Terraform recreates it.
 				PreConfig: func() {
 					rec, _ := findRecord(r, "A", "nas.home.internal")
-					r.Remove(rec.ID)
+					r.RemoveDNS(rec.ID)
 				},
 				Config: cfg,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
@@ -231,7 +231,7 @@ resource "dreamrouter_dns_record" "a" {
 						plancheck.ExpectResourceAction("dreamrouter_dns_record.a", plancheck.ResourceActionCreate),
 					},
 				},
-				Check: checkStored(r, "A", "nas.home.internal", func(fakerouter.Record) error { return nil }),
+				Check: checkStored(r, "A", "nas.home.internal", func(fakerouter.DNSRecord) error { return nil }),
 			},
 		},
 	})
@@ -266,7 +266,7 @@ func TestRecordValidation(t *testing.T) {
 			})
 		})
 	}
-	if n := len(r.Records()); n != 0 {
+	if n := len(r.DNS()); n != 0 {
 		t.Fatalf("validation failures reached the router: %d records stored", n)
 	}
 }
@@ -274,8 +274,8 @@ func TestRecordValidation(t *testing.T) {
 func TestImportErrorsAndDuplicates(t *testing.T) {
 	r := fakerouter.New()
 	defer r.Close()
-	r.Put(fakerouter.Record{RecordType: "A", Key: "rr.home.internal", Value: "192.168.1.10", Enabled: true})
-	r.Put(fakerouter.Record{RecordType: "A", Key: "rr.home.internal", Value: "192.168.1.11", Enabled: true})
+	r.PutDNS(fakerouter.DNSRecord{RecordType: "A", Key: "rr.home.internal", Value: "192.168.1.10", Enabled: true})
+	r.PutDNS(fakerouter.DNSRecord{RecordType: "A", Key: "rr.home.internal", Value: "192.168.1.11", Enabled: true})
 	cfg := fakeProviderConfig(r) + `
 resource "dreamrouter_dns_record" "rr" {
   type  = "A"
@@ -328,9 +328,9 @@ resource "dreamrouter_dns_record" "rr" {
 func TestRecordsDataSource(t *testing.T) {
 	r := fakerouter.New()
 	defer r.Close()
-	r.Put(fakerouter.Record{RecordType: "A", Key: "b.home.internal", Value: "192.168.1.2", Enabled: true})
-	r.Put(fakerouter.Record{RecordType: "A", Key: "a.home.internal", Value: "192.168.1.1", Enabled: true})
-	r.Put(fakerouter.Record{RecordType: "MX", Key: "home.internal", Value: "mail.home.internal", Priority: 10, Enabled: true})
+	r.PutDNS(fakerouter.DNSRecord{RecordType: "A", Key: "b.home.internal", Value: "192.168.1.2", Enabled: true})
+	r.PutDNS(fakerouter.DNSRecord{RecordType: "A", Key: "a.home.internal", Value: "192.168.1.1", Enabled: true})
+	r.PutDNS(fakerouter.DNSRecord{RecordType: "MX", Key: "home.internal", Value: "mail.home.internal", Priority: 10, Enabled: true})
 	resource.UnitTest(t, resource.TestCase{
 		ProtoV6ProviderFactories: providerFactories,
 		Steps: []resource.TestStep{{
