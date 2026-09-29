@@ -20,18 +20,57 @@ command-line tool, in [dreamrouter-go](https://github.com/liketed/dreamrouter-go
 
 ## Requirements
 
-- Go 1.26+ to build the provider.
-- Terraform 1.5+ or OpenTofu 1.6+ (tested with Terraform 1.15 and OpenTofu 1.12).
+- Terraform 1.5+ (tested with Terraform 1.15 and 1.16). OpenTofu works too, but the
+  provider isn't on the OpenTofu Registry yet; see [OpenTofu](#opentofu).
 - A **local** UniFi OS admin account on the router, with permission to change network
   settings. A UI.com cloud account with SSO/2FA will not work.
 
 ## Installing
 
-The provider isn't published to the Terraform Registry yet, so Terraform has to be told
-where to find a local build. Get the binary one of two ways:
+The provider is published on the Terraform Registry as
+[`liketed/dreamrouter`](https://registry.terraform.io/providers/liketed/dreamrouter/latest),
+with documentation for every resource and data source
+([docs](https://registry.terraform.io/providers/liketed/dreamrouter/latest/docs)).
+Add it to your configuration and run `terraform init`:
+
+```hcl
+terraform {
+  required_providers {
+    dreamrouter = {
+      source  = "liketed/dreamrouter"
+      version = "~> 0.1"
+    }
+  }
+}
+
+provider "dreamrouter" {}
+```
 
 ```bash
-# Install the latest version from GitHub into $(go env GOPATH)/bin (usually ~/go/bin):
+export DREAMROUTER_PASSWORD='...'   # see Provider configuration below
+terraform init
+terraform plan
+```
+
+`terraform init` downloads the build for your platform (macOS, Linux, Windows or
+FreeBSD, on amd64 or arm64 and more) and checks its signature. Releases are listed on
+the [GitHub releases page](https://github.com/liketed/terraform-provider-dreamrouter/releases).
+
+The provider is at version 0.x: its interface may still change between minor versions,
+so pin it with `~> 0.1` (any 0.1.x) and read the release notes before moving to 0.2.
+
+### OpenTofu
+
+The provider isn't on the OpenTofu Registry yet. Until it is, OpenTofu users can build it
+from source and use a `dev_overrides` block in `~/.tofurc`, as described below.
+
+### Building from source
+
+For local development, or to try unreleased changes, build the provider and tell
+Terraform (or OpenTofu) to use your build instead of the registry's:
+
+```bash
+# Install the latest commit from GitHub into $(go env GOPATH)/bin (usually ~/go/bin):
 go install github.com/liketed/terraform-provider-dreamrouter@latest
 
 # Or build from a clone of this repository:
@@ -40,9 +79,10 @@ cd terraform-provider-dreamrouter
 go build -o terraform-provider-dreamrouter .
 ```
 
-Then add a `dev_overrides` block to `~/.terraformrc` (Terraform) or `~/.tofurc`
-(OpenTofu), pointing at the **directory** that contains the binary: `~/go/bin` after
-`go install`, or the clone's directory after `go build`. Use an absolute path:
+This needs Go 1.26 or later. Then add a `dev_overrides` block to `~/.terraformrc`
+(Terraform) or `~/.tofurc` (OpenTofu), pointing at the **directory** that contains the
+binary: `~/go/bin` after `go install`, or the clone's directory after `go build`. Use an
+absolute path:
 
 ```hcl
 provider_installation {
@@ -53,26 +93,10 @@ provider_installation {
 }
 ```
 
-Then, in your configuration:
-
-```hcl
-terraform {
-  required_providers {
-    dreamrouter = {
-      source = "liketed/dreamrouter"
-    }
-  }
-}
-```
-
 With `dev_overrides` there is no need to run `terraform init` for this provider, and
 Terraform prints a warning that development overrides are in effect, which is expected.
-Without the `dev_overrides` entry, `terraform init` tries to download
-`liketed/dreamrouter` from the Terraform Registry and fails until it is published there.
-Once it is published (see [Releasing](#releasing)), `terraform init` / `tofu init`
-installs it like any other provider and `dev_overrides` is only needed for local
-development. After changing the code, rebuild (or re-run `go install`) and the next `plan`
-uses the new binary.
+After changing the code, rebuild (or re-run `go install`) and the next `plan` uses the new
+binary. Remove the `dev_overrides` entry to go back to the published version.
 
 ## Provider configuration
 
@@ -459,9 +483,10 @@ The Test workflow fails if `docs/` is out of date.
 ## Releasing
 
 Releases are built and signed by GitHub Actions when a version tag is pushed. The
-Terraform and OpenTofu registries pick them up from GitHub.
+Terraform Registry picks them up from GitHub automatically (it is set up for this
+repository); the OpenTofu Registry will too once the provider is submitted there.
 
-One-time setup:
+One-time setup (already done for the Terraform Registry; kept here for reference):
 
 1. Create an **RSA** GPG key for signing (the Terraform Registry doesn't accept ECC keys):
    `gpg --full-generate-key`, choosing RSA and RSA, 4096 bits.
