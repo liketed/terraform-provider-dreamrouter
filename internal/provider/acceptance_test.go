@@ -302,3 +302,66 @@ func TestAccReservationsAndHosts(t *testing.T) {
 		},
 	})
 }
+
+// accCheckNetworkBootOff fails unless the Default network has network boot
+// off and no TFTP server, as after destroying dreamrouter_network_dhcp.
+func accCheckNetworkBootOff(t *testing.T) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		networks, err := accClient(t).ListNetworks(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, n := range networks {
+			if n.Name == "Default" && (n.BootEnabled || n.TFTPServer != "" || n.BootServer != "") {
+				return fmt.Errorf("network Default still has boot=%v server=%q tftp=%q", n.BootEnabled, n.BootServer, n.TFTPServer)
+			}
+		}
+		return nil
+	}
+}
+
+func accNetworkDHCPConfig(file string) string {
+	return fmt.Sprintf(`
+provider "dreamrouter" {}
+
+resource "dreamrouter_network_dhcp" "lan" {
+  network = "Default"
+  boot = {
+    server = "192.168.1.249"
+    file   = %q
+  }
+  tftp_server = "tftp.tftest.invalid"
+}
+`, file)
+}
+
+func TestAccNetworkDHCP(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		CheckDestroy:             accCheckNetworkBootOff(t),
+		Steps: []resource.TestStep{
+			{
+				Config: accNetworkDHCPConfig("tf-acc.efi"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("dreamrouter_network_dhcp.lan", "boot.server", "192.168.1.249"),
+					resource.TestCheckResourceAttr("dreamrouter_network_dhcp.lan", "tftp_server", "tftp.tftest.invalid"),
+				),
+			},
+			{
+				Config: accNetworkDHCPConfig("tf-acc2.efi"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("dreamrouter_network_dhcp.lan", plancheck.ResourceActionUpdate),
+				}},
+				Check: resource.TestCheckResourceAttr("dreamrouter_network_dhcp.lan", "boot.file", "tf-acc2.efi"),
+			},
+			{
+				ResourceName:            "dreamrouter_network_dhcp.lan",
+				ImportState:             true,
+				ImportStateId:           "Default",
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"network"},
+			},
+		},
+	})
+}

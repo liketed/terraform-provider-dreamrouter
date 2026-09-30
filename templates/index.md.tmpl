@@ -14,6 +14,8 @@ It manages:
   AAAA, CNAME, MX, NS, SRV and TXT.
 - **DHCP reservations** (`dreamrouter_dhcp_reservation`): fixed IP addresses for devices.
 - **Hosts** (`dreamrouter_host`): a device's fixed IP and its DNS name, managed together.
+- **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE) and the TFTP
+  server handed out on an existing network.
 
 Data sources list the router's DNS names (`dreamrouter_dns_records`) and networks
 (`dreamrouter_networks`). Everything created with this provider appears in the web UI,

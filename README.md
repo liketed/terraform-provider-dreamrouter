@@ -7,6 +7,8 @@ Terraform or OpenTofu:
   **A, AAAA, CNAME, MX, NS, SRV and TXT**.
 - **DHCP reservations** (`dreamrouter_dhcp_reservation`): fixed IP addresses for devices.
 - **Hosts** (`dreamrouter_host`): a device's fixed IP and its DNS name, managed together.
+- **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE) and the TFTP
+  server handed out on an existing network.
 - Data sources for the router's DNS names (`dreamrouter_dns_records`) and networks
   (`dreamrouter_networks`).
 
@@ -309,6 +311,49 @@ Use either `dreamrouter_host` or `dreamrouter_dhcp_reservation` for a device, no
 Drift: a changed IP or name is set back, a DNS name turned off in the web UI is turned
 back on, and a removed reservation is recreated. Import by host name (or MAC address):
 `terraform import dreamrouter_host.nas nas.home.internal`.
+
+## Resource: `dreamrouter_network_dhcp`
+
+DHCP settings of an existing network: network boot (PXE) and the TFTP server. It never
+creates or deletes networks.
+
+```hcl
+resource "dreamrouter_network_dhcp" "lan" {
+  network = "Default"
+
+  boot = {                              # omit to keep network boot off
+    server = "192.168.1.20"
+    file   = "netboot.xyz.efi"
+  }
+
+  tftp_server = "tftp.home.internal"    # optional (DHCP option 66)
+}
+```
+
+| Argument | Required | Notes |
+|---|---|---|
+| `network` | yes | Network name, e.g. `Default` (case-insensitive). Changing it replaces the resource. |
+| `boot.server` | with `boot` | IPv4 address of the boot server. |
+| `boot.file` | with `boot` | File a network-booting machine should load; may include a path. No spaces or commas. |
+| `tftp_server` | no | TFTP server name or IP handed out as DHCP option 66 (e.g. for IP phones). |
+
+- These are the web UI's **Network Boot**, **Network Boot Server IP**, **Network Boot
+  Filename** and **TFTP Server** settings. Devices pick up changes the next time they ask
+  for an address; a network-booting machine does so when it starts.
+- The TFTP server is **independent of `boot`**: the router hands it out whenever it is set.
+- Removing `boot` turns network boot off; the router keeps the last server and file
+  stored, as the web UI does. **Destroying** the resource turns network boot off, clears
+  the boot server and stops handing out the TFTP server. (The router doesn't allow
+  clearing a stored boot file, so that stays, inactive.)
+- The router accepts values that would break its dnsmasq configuration (commas, spaces,
+  a host name as the server); the provider rejects them at plan time.
+- **One boot file per network, and no per-device boot settings**: the router only exposes
+  a single file per network, and reservations hold just a MAC address and IP. For
+  different behaviour per machine (or UEFI vs BIOS), hand out a boot loader such as iPXE
+  or netboot.xyz that decides per machine on the server.
+- Manage each network from one `dreamrouter_network_dhcp` resource only. Drift (e.g. a
+  boot server changed in the web UI) is set back. Import by network name:
+  `terraform import dreamrouter_network_dhcp.lan Default`.
 
 ## Data source: `dreamrouter_dns_records`
 

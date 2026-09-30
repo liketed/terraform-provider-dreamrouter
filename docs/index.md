@@ -1,12 +1,12 @@
 ---
 page_title: "Dream Router Provider"
 description: |-
-  Manages static DNS records, DHCP reservations and device DNS names on a UniFi Dream Router 7 (or other UniFi OS gateway) through the UniFi Network application's API: the same settings as Settings → Routing → DNS and each client's fixed IP and local DNS record in the web UI.
+  Manages static DNS records, DHCP reservations, device DNS names and network DHCP settings on a UniFi Dream Router 7 (or other UniFi OS gateway) through the UniFi Network application's API: the same settings as Settings → Routing → DNS and each client's fixed IP and local DNS record in the web UI.
 ---
 
 # Dream Router Provider
 
-Manages static DNS records, DHCP reservations and device DNS names on a UniFi Dream Router 7 (or other UniFi OS gateway) through the UniFi Network application's API: the same settings as Settings → Routing → DNS and each client's fixed IP and local DNS record in the web UI.
+Manages static DNS records, DHCP reservations, device DNS names and network DHCP settings on a UniFi Dream Router 7 (or other UniFi OS gateway) through the UniFi Network application's API: the same settings as Settings → Routing → DNS and each client's fixed IP and local DNS record in the web UI.
 
 It manages:
 
@@ -14,6 +14,8 @@ It manages:
   AAAA, CNAME, MX, NS, SRV and TXT.
 - **DHCP reservations** (`dreamrouter_dhcp_reservation`): fixed IP addresses for devices.
 - **Hosts** (`dreamrouter_host`): a device's fixed IP and its DNS name, managed together.
+- **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE) and the TFTP
+  server handed out on an existing network.
 
 Data sources list the router's DNS names (`dreamrouter_dns_records`) and networks
 (`dreamrouter_networks`). Everything created with this provider appears in the web UI,

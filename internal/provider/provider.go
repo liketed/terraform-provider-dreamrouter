@@ -75,7 +75,7 @@ func (p *dreamRouterProvider) Metadata(_ context.Context, _ provider.MetadataReq
 
 func (p *dreamRouterProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Manages static DNS records, DHCP reservations and device DNS names on a UniFi Dream " +
+		Description: "Manages static DNS records, DHCP reservations, device DNS names and network DHCP settings on a UniFi Dream " +
 			"Router 7 (or other UniFi OS gateway) through the UniFi Network application's API: the same " +
 			"settings as Settings → Routing → DNS and each client's fixed IP and local DNS record in the web UI.",
 		Attributes: map[string]schema.Attribute{
@@ -181,7 +181,7 @@ func (p *dreamRouterProvider) Configure(ctx context.Context, req provider.Config
 }
 
 func (p *dreamRouterProvider) Resources(context.Context) []func() resource.Resource {
-	return []func() resource.Resource{newRecordResource, newReservationResource, newHostResource}
+	return []func() resource.Resource{newRecordResource, newReservationResource, newHostResource, newNetworkDHCPResource}
 }
 
 func (p *dreamRouterProvider) DataSources(context.Context) []func() datasource.DataSource {
