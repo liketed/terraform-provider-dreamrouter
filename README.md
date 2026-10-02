@@ -9,8 +9,8 @@ Terraform or OpenTofu:
 - **Hosts** (`dreamrouter_host`): a device's fixed IP and its DNS name, managed together.
 - **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE) and the TFTP
   server handed out on an existing network.
-- Data sources for the router's DNS names (`dreamrouter_dns_records`) and networks
-  (`dreamrouter_networks`).
+- Data sources for the router's DNS names (`dreamrouter_dns_records`), networks
+  (`dreamrouter_networks`) and current DHCP leases (`dreamrouter_leases`).
 
 Everything is managed through the UniFi Network application's own API, so it is the same
 as settings made in the web UI (**Settings → Routing → DNS**, and each client's fixed IP
@@ -399,6 +399,103 @@ resource "dreamrouter_dhcp_reservation" "sensor" {
 
 Each entry in `networks` has `id`, `name`, `purpose`, `subnet` (e.g. `192.168.1.1/24`),
 `vlan`, `dhcp_enabled`, `dhcp_start`, `dhcp_stop` and `domain_name`.
+
+## Data source: `dreamrouter_leases`
+
+Lists the router's current DHCP leases: which device has which address.
+
+```hcl
+data "dreamrouter_leases" "all" {}
+
+data "dreamrouter_leases" "online" {
+  network = "Default"   # optional filter
+  status  = "online"    # optional: "online" or "offline"
+}
+
+# Look a device up by host name and reserve its current address.
+locals {
+  tv = one([for l in data.dreamrouter_leases.all.leases : l if l.hostname == "tv"])
+}
+
+resource "dreamrouter_dhcp_reservation" "tv" {
+  mac = local.tv.mac
+  ip  = local.tv.ip
+}
+```
+
+Each entry in `leases` has `ip`, `mac`, `name`, `hostname`, `vendor`, `status`
+(`online`/`offline`), `connection` (`wired`/`wireless`), `expires` (RFC 3339, UTC; empty if
+unknown), `reserved`, `dns_name` and `network_id`, sorted by IP. `name` is the name set in
+the web UI, else the router's name for the device, else its host name.
+
+Leases describe the network **right now**: expiry times change constantly and devices come
+and go. Use the data source for lookups, as above, rather than passing changing values
+such as `expires` into resources, which would show changes on every plan. Once a device is
+reserved, the reservation keeps its address even if the lease data later changes.
+
+### Filtering the leases with `locals`
+
+The data source returns every lease (optionally filtered by network and status); pick out
+what you need with `for` expressions in `locals`:
+
+```hcl
+data "dreamrouter_leases" "all" {}
+
+locals {
+  leases = data.dreamrouter_leases.all.leases
+
+  # One device. one() returns null if nothing matches and fails if several do.
+  printer = one([for l in local.leases : l if l.mac == "aa:bb:cc:dd:ee:02"])
+  by_ip   = one([for l in local.leases : l if l.ip == "192.168.1.37"])
+  nas     = one([for l in local.leases : l if l.dns_name == "nas.home.internal"])
+  tv      = one([for l in local.leases : l if l.hostname == "tv"])
+
+  # Groups of devices.
+  unreserved = [for l in local.leases : l if !l.reserved]
+  online     = [for l in local.leases : l if l.status == "online"]
+  wireless   = [for l in local.leases : l if l.connection == "wireless"]
+  apple      = [for l in local.leases : l if startswith(l.vendor, "Apple")]
+  cameras    = [for l in local.leases : l if can(regex("(?i)cam", l.name))]
+
+  # Lookup maps. Host names aren't unique, so group them with "..." (each value is a list).
+  mac_by_ip       = { for l in local.leases : l.ip => l.mac }
+  ips_by_hostname = { for l in local.leases : l.hostname => l.ip... if l.hostname != "" }
+}
+
+output "unreserved_devices" {
+  value = [for l in local.unreserved : "${l.ip}  ${l.mac}  ${l.name}"]
+}
+```
+
+**Host names aren't unique.** Many devices send a generic one (`wlan0`, `android-…`) or
+none at all, so on a real network several leases can share a host name. Then `one()` fails
+with "Invalid function argument", and a plain `{ for l in … : l.hostname => l.ip }` map
+fails with "Duplicate object key". Look single devices up by **MAC address** (or by
+`dns_name`, which this provider and drctl keep unique), and use the `...` grouping form for
+host-name maps.
+
+**Reserving several devices at once** works with `for_each`, keyed by MAC address:
+
+```hcl
+locals {
+  cameras_by_mac = { for l in local.leases : l.mac => l if can(regex("(?i)cam", l.name)) }
+}
+
+resource "dreamrouter_dhcp_reservation" "cameras" {
+  for_each = local.cameras_by_mac
+
+  mac  = each.key
+  ip   = each.value.ip
+  name = each.value.name
+}
+```
+
+Be careful with this pattern: the set of reservations then follows the **current**
+leases. If a camera is offline long enough for its lease to disappear, or is renamed so
+the filter no longer matches, it drops out of the map and the next apply **removes its
+reservation**. For devices you want to keep, use the data source once to discover their
+MAC and IP addresses, then write those values into the configuration, e.g. as a map in
+`locals`, so the reservations no longer depend on what is online.
 
 ## Login limit
 

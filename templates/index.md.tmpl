@@ -17,8 +17,8 @@ It manages:
 - **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE) and the TFTP
   server handed out on an existing network.
 
-Data sources list the router's DNS names (`dreamrouter_dns_records`) and networks
-(`dreamrouter_networks`). Everything created with this provider appears in the web UI,
+Data sources list the router's DNS names (`dreamrouter_dns_records`), networks
+(`dreamrouter_networks`) and current DHCP leases (`dreamrouter_leases`). Everything created with this provider appears in the web UI,
 survives reboots and firmware updates, and reaches the router's DNS and DHCP server about
 10–20 seconds after an apply.
 

@@ -365,3 +365,23 @@ func TestAccNetworkDHCP(t *testing.T) {
 		},
 	})
 }
+
+// TestAccLeases is read-only: it lists the router's real leases.
+func TestAccLeases(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{{
+			Config: `
+provider "dreamrouter" {}
+data "dreamrouter_leases" "all" {}
+data "dreamrouter_leases" "online" { status = "online" }
+`,
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttrSet("data.dreamrouter_leases.all", "leases.0.ip"),
+				resource.TestCheckResourceAttrSet("data.dreamrouter_leases.all", "leases.0.mac"),
+				resource.TestCheckResourceAttrSet("data.dreamrouter_leases.online", "leases.0.ip"),
+			),
+		}},
+	})
+}
