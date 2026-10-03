@@ -455,3 +455,69 @@ data "dreamrouter_status" "router" {}
 		}},
 	})
 }
+
+// accCheckNoTestForwards fails if a test port forward (named acc-*) is left.
+func accCheckNoTestForwards(t *testing.T) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		list, err := accClient(t).ListPortForwards(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, pf := range list {
+			if strings.HasPrefix(pf.Name, "acc-") {
+				return fmt.Errorf("test port forward left on the router: %+v", pf)
+			}
+		}
+		return nil
+	}
+}
+
+func accPortForwardConfig(port string) string {
+	return fmt.Sprintf(`
+provider "dreamrouter" {}
+resource "dreamrouter_port_forward" "acc" {
+  name       = "acc-probe"
+  port       = %q
+  forward_ip = "192.168.1.250"
+  protocol   = "tcp"
+  enabled    = false # never opens anything
+}
+data "dreamrouter_port_forwards" "all" {
+  depends_on = [dreamrouter_port_forward.acc]
+}
+`, port)
+}
+
+// TestAccPortForward creates, changes, imports and destroys a disabled
+// port forward to an unused address, so nothing is ever opened.
+func TestAccPortForward(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		CheckDestroy:             accCheckNoTestForwards(t),
+		Steps: []resource.TestStep{
+			{
+				Config: accPortForwardConfig("40001"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("dreamrouter_port_forward.acc", "enabled", "false"),
+					resource.TestCheckResourceAttrSet("dreamrouter_port_forward.acc", "id"),
+					resource.TestCheckTypeSetElemNestedAttrs("data.dreamrouter_port_forwards.all", "port_forwards.*",
+						map[string]string{"name": "acc-probe", "port": "40001", "forward_port": "40001", "enabled": "false"}),
+				),
+			},
+			{
+				Config: accPortForwardConfig("40010-40020"),
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("dreamrouter_port_forward.acc", plancheck.ResourceActionUpdate),
+				}},
+				Check: resource.TestCheckResourceAttr("dreamrouter_port_forward.acc", "port", "40010-40020"),
+			},
+			{
+				ResourceName:      "dreamrouter_port_forward.acc",
+				ImportState:       true,
+				ImportStateId:     "acc-probe",
+				ImportStateVerify: true,
+			},
+		},
+	})
+}

@@ -11,9 +11,12 @@ Terraform or OpenTofu:
   server handed out on an existing network.
 - **Blocked devices** (`dreamrouter_client_block`): devices that can't connect, by MAC
   address.
+- **Port forwarding** (`dreamrouter_port_forward`): ports opened to the internet and
+  forwarded to a device on your network.
 - Data sources for the router's DNS names (`dreamrouter_dns_records`), networks
   (`dreamrouter_networks`), current DHCP leases (`dreamrouter_leases`), devices
-  (`dreamrouter_clients`) and the router's status (`dreamrouter_status`).
+  (`dreamrouter_clients`), port forwards (`dreamrouter_port_forwards`) and the router's
+  status (`dreamrouter_status`).
 
 Everything is managed through the UniFi Network application's own API, so it is the same
 as settings made in the web UI (**Settings → Routing → DNS**, and each client's fixed IP
@@ -379,6 +382,38 @@ resource "dreamrouter_client_block" "old_tablet" {
 - Import a blocked device by its MAC address:
   `terraform import dreamrouter_client_block.old_tablet aa:bb:cc:dd:ee:40`.
 
+## Resource: `dreamrouter_port_forward`
+
+A port forwarding rule: connections from the internet to `port` on the router go to
+`forward_ip`. **An enabled rule opens that port to the internet**, or only to `source`.
+
+```hcl
+resource "dreamrouter_port_forward" "web" {
+  name         = "web"
+  port         = "8443"         # a port, an ascending range ("40010-40020") or a list ("80,443")
+  forward_ip   = "192.168.1.20"
+  forward_port = "443"          # optional; defaults to the same as port
+  protocol     = "tcp"          # "tcp", "udp" or "tcp_udp" (the default)
+  source       = "any"          # the default; or an address or network, e.g. "203.0.113.0/24"
+  enabled      = true           # the default; false keeps the rule but opens nothing
+}
+```
+
+The router accepts several rules that don't work or conflict, so the provider checks
+them before applying:
+
+- `forward_ip` must be a device on one of the router's networks, not the router itself.
+- Ranges must be ascending. **Only a single port can be forwarded to a different port**:
+  the router forwards a range or list only to the same ports, so leave `forward_port` out
+  for those.
+- Names are unique, and no two **enabled** rules may forward the same port and protocol.
+  A disabled duplicate is allowed; enabling it while the other is enabled fails.
+- `wan = "wan2"` or `"both"` needs a router with a second internet connection.
+
+Changes made in the web UI are put back on the next apply, a rule deleted there is created
+again, and rules made in the web UI can be imported by name:
+`terraform import dreamrouter_port_forward.web web`.
+
 ## Data source: `dreamrouter_dns_records`
 
 Lists the names the router answers for: static DNS records and devices' DNS names,
@@ -549,6 +584,20 @@ reserved), `status`, `connection` (`wired` or `wifi`), `network_id`, `ssid`, `ba
 As with leases, values such as uptime, traffic and signal change all the time: use the
 data source for lookups and filtering, not as input to resources that should stay put.
 Look devices up by MAC address; names and host names aren't unique.
+
+## Data source: `dreamrouter_port_forwards`
+
+Lists all port forwarding rules, including those made in the web UI, sorted by name.
+Each has `id`, `name`, `port`, `forward_ip`, `forward_port`, `protocol`, `source`, `wan`,
+`enabled` and `log`.
+
+```hcl
+data "dreamrouter_port_forwards" "all" {}
+
+output "open_ports" {
+  value = [for f in data.dreamrouter_port_forwards.all.port_forwards : "${f.protocol} ${f.port} -> ${f.forward_ip}" if f.enabled]
+}
+```
 
 ## Data source: `dreamrouter_status`
 
