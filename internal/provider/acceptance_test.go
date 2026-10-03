@@ -385,3 +385,55 @@ data "dreamrouter_leases" "online" { status = "online" }
 		}},
 	})
 }
+
+// accCheckBlockDevice checks whether the made-up device 02:00:00:dd:cc:41
+// has a record, and if so whether it is blocked.
+func accCheckBlockDevice(t *testing.T, wantRecord, wantBlocked bool) resource.TestCheckFunc {
+	return func(*terraform.State) error {
+		clients, err := accClient(t).ListClients(context.Background())
+		if err != nil {
+			return err
+		}
+		for _, d := range clients {
+			if d.MAC == "02:00:00:dd:cc:41" {
+				switch {
+				case !wantRecord:
+					return fmt.Errorf("record for 02:00:00:dd:cc:41 left on the router: %+v", d)
+				case d.Blocked != wantBlocked:
+					return fmt.Errorf("02:00:00:dd:cc:41 blocked = %v, want %v", d.Blocked, wantBlocked)
+				}
+				return nil
+			}
+		}
+		if wantRecord {
+			return fmt.Errorf("no record for 02:00:00:dd:cc:41")
+		}
+		return nil
+	}
+}
+
+// TestAccClients reads the device list and blocks a made-up MAC address the
+// router doesn't know; destroying unblocks it and removes the record the
+// block created.
+func TestAccClients(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		CheckDestroy:             accCheckBlockDevice(t, false, false),
+		Steps: []resource.TestStep{{
+			Config: `
+provider "dreamrouter" {}
+data "dreamrouter_clients" "online" { status = "online" }
+resource "dreamrouter_client_block" "acc" {
+  mac = "02:00:00:dd:cc:41"
+}
+`,
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttrSet("data.dreamrouter_clients.online", "clients.0.mac"),
+				resource.TestCheckResourceAttr("data.dreamrouter_clients.online", "clients.0.status", "online"),
+				resource.TestCheckResourceAttr("dreamrouter_client_block.acc", "id", "02:00:00:dd:cc:41"),
+				accCheckBlockDevice(t, true, true),
+			),
+		}},
+	})
+}

@@ -9,8 +9,11 @@ Terraform or OpenTofu:
 - **Hosts** (`dreamrouter_host`): a device's fixed IP and its DNS name, managed together.
 - **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE) and the TFTP
   server handed out on an existing network.
+- **Blocked devices** (`dreamrouter_client_block`): devices that can't connect, by MAC
+  address.
 - Data sources for the router's DNS names (`dreamrouter_dns_records`), networks
-  (`dreamrouter_networks`) and current DHCP leases (`dreamrouter_leases`).
+  (`dreamrouter_networks`), current DHCP leases (`dreamrouter_leases`) and devices
+  (`dreamrouter_clients`).
 
 Everything is managed through the UniFi Network application's own API, so it is the same
 as settings made in the web UI (**Settings → Routing → DNS**, and each client's fixed IP
@@ -355,6 +358,27 @@ resource "dreamrouter_network_dhcp" "lan" {
   boot server changed in the web UI) is set back. Import by network name:
   `terraform import dreamrouter_network_dhcp.lan Default`.
 
+## Resource: `dreamrouter_client_block`
+
+Blocks a device by MAC address: it is disconnected and can't connect again, on Wi-Fi or
+wired ports. Destroying the resource unblocks it.
+
+```hcl
+resource "dreamrouter_client_block" "old_tablet" {
+  mac = "aa:bb:cc:dd:ee:40"
+}
+```
+
+- The MAC address may be one the router **doesn't know yet** (a device that has never
+  connected), to block it before it joins. The plan applies with an "Unknown device"
+  warning. The router creates a record for the device; destroying the resource removes it
+  again, as long as the device never connected and has no name, note or reservation.
+- The provider **refuses to block the machine Terraform runs on**, recognised by its MAC
+  or IP address, so an apply can't cut itself off.
+- If the device is unblocked in the web UI (or forgotten), the next plan blocks it again.
+- Import a blocked device by its MAC address:
+  `terraform import dreamrouter_client_block.old_tablet aa:bb:cc:dd:ee:40`.
+
 ## Data source: `dreamrouter_dns_records`
 
 Lists the names the router answers for: static DNS records and devices' DNS names,
@@ -496,6 +520,35 @@ the filter no longer matches, it drops out of the map and the next apply **remov
 reservation**. For devices you want to keep, use the data source once to discover their
 MAC and IP addresses, then write those values into the configuration, e.g. as a map in
 `locals`, so the reservations no longer depend on what is online.
+
+## Data source: `dreamrouter_clients`
+
+Lists the devices on the network: those connected now, those seen in the last `days`
+(default 7), and blocked devices however long ago they were seen.
+
+```hcl
+data "dreamrouter_clients" "all" {}
+
+data "dreamrouter_clients" "wifi" {
+  status          = "online"   # or "offline"
+  connection_type = "wifi"     # or "wired"
+  network         = "Default"
+}
+
+data "dreamrouter_clients" "blocked" {
+  blocked = true
+}
+```
+
+Each entry in `clients` has `mac`, `name`, `hostname`, `ip` (current, else last, else
+reserved), `status`, `connection` (`wired` or `wifi`), `network_id`, `ssid`, `band`,
+`signal` (dBm), `uplink` (access point, switch or router), `port`, `link_mbps`, `uptime`
+(seconds), `download_bytes`, `upload_bytes`, `vendor`, `last_seen`, `blocked`,
+`reserved`, `dns_name` and `note`. Entries are sorted by IP address.
+
+As with leases, values such as uptime, traffic and signal change all the time: use the
+data source for lookups and filtering, not as input to resources that should stay put.
+Look devices up by MAC address; names and host names aren't unique.
 
 ## Login limit
 

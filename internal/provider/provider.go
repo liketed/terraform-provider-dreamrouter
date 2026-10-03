@@ -181,11 +181,11 @@ func (p *dreamRouterProvider) Configure(ctx context.Context, req provider.Config
 }
 
 func (p *dreamRouterProvider) Resources(context.Context) []func() resource.Resource {
-	return []func() resource.Resource{newRecordResource, newReservationResource, newHostResource, newNetworkDHCPResource}
+	return []func() resource.Resource{newRecordResource, newReservationResource, newHostResource, newNetworkDHCPResource, newClientBlockResource}
 }
 
 func (p *dreamRouterProvider) DataSources(context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{newRecordsDataSource, newNetworksDataSource, newLeasesDataSource}
+	return []func() datasource.DataSource{newRecordsDataSource, newNetworksDataSource, newLeasesDataSource, newClientsDataSource}
 }
 
 // parseTimeout accepts Go durations ("2m", "90s") and a bare "0".
