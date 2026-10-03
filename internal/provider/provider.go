@@ -185,7 +185,7 @@ func (p *dreamRouterProvider) Resources(context.Context) []func() resource.Resou
 }
 
 func (p *dreamRouterProvider) DataSources(context.Context) []func() datasource.DataSource {
-	return []func() datasource.DataSource{newRecordsDataSource, newNetworksDataSource, newLeasesDataSource, newClientsDataSource}
+	return []func() datasource.DataSource{newRecordsDataSource, newNetworksDataSource, newLeasesDataSource, newClientsDataSource, newStatusDataSource}
 }
 
 // parseTimeout accepts Go durations ("2m", "90s") and a bare "0".

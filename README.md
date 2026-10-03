@@ -12,8 +12,8 @@ Terraform or OpenTofu:
 - **Blocked devices** (`dreamrouter_client_block`): devices that can't connect, by MAC
   address.
 - Data sources for the router's DNS names (`dreamrouter_dns_records`), networks
-  (`dreamrouter_networks`), current DHCP leases (`dreamrouter_leases`) and devices
-  (`dreamrouter_clients`).
+  (`dreamrouter_networks`), current DHCP leases (`dreamrouter_leases`), devices
+  (`dreamrouter_clients`) and the router's status (`dreamrouter_status`).
 
 Everything is managed through the UniFi Network application's own API, so it is the same
 as settings made in the web UI (**Settings → Routing → DNS**, and each client's fixed IP
@@ -549,6 +549,32 @@ reserved), `status`, `connection` (`wired` or `wifi`), `network_id`, `ssid`, `ba
 As with leases, values such as uptime, traffic and signal change all the time: use the
 data source for lookups and filtering, not as input to resources that should stay put.
 Look devices up by MAC address; names and host names aren't unique.
+
+## Data source: `dreamrouter_status`
+
+An overview of the router: versions, internet connection, load, client counts, firmware
+and the last speed test.
+
+```hcl
+data "dreamrouter_status" "router" {}
+
+output "wan_ip" {
+  value = data.dreamrouter_status.router.wan_ip
+}
+```
+
+Attributes: `name`, `model`, `os_version`, `network_version`, `timezone`, `uptime`,
+`internet_status`, `wan_up`, `wan_ip`, `isp`, `asn`, `wan_interface`, `wan_link_mbps`,
+`pppoe`, `latency_ms`, `cpu_percent`, `memory_percent`, `cpu_temperature`, `clients`,
+`wired_clients`, `wifi_clients`, `access_points`, `switches`, `update_available`,
+`speedtest_run`, `speedtest_download_mbps`, `speedtest_upload_mbps`, and `devices` (each
+with `name`, `model`, `type`, `mac`, `ip`, `version`, `online`, `upgradable` and
+`upgrade_to`). The access point and switch counts include the router's own built-in Wi-Fi
+and switch ports.
+
+Most of these change all the time. The stable ones, such as `wan_ip` and the versions,
+are the useful inputs elsewhere, for example the WAN IP address in a DNS record at another
+DNS provider.
 
 ## Login limit
 

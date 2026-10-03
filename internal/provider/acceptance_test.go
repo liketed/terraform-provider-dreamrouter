@@ -437,3 +437,21 @@ resource "dreamrouter_client_block" "acc" {
 		}},
 	})
 }
+
+func TestAccStatus(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{{
+			Config: `
+provider "dreamrouter" {}
+data "dreamrouter_status" "router" {}
+`,
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttrSet("data.dreamrouter_status.router", "os_version"),
+				resource.TestCheckResourceAttrSet("data.dreamrouter_status.router", "wan_ip"),
+				resource.TestCheckResourceAttrSet("data.dreamrouter_status.router", "devices.0.version"),
+			),
+		}},
+	})
+}
