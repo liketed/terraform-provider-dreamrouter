@@ -521,3 +521,45 @@ func TestAccPortForward(t *testing.T) {
 		},
 	})
 }
+
+// TestAccSSH manages both SSH settings with the values they already have
+// (both on), so nothing on the router changes; destroying leaves SSH alone.
+func TestAccSSH(t *testing.T) {
+	cfg := `
+provider "dreamrouter" {}
+resource "dreamrouter_ssh" "acc" {
+  router  = true
+  devices = true
+}
+`
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		CheckDestroy: func(*terraform.State) error {
+			s, err := accClient(t).GetSSH(context.Background())
+			if err != nil {
+				return err
+			}
+			if !s.Router || !s.Devices {
+				return fmt.Errorf("SSH settings changed: %+v", s)
+			}
+			return nil
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("dreamrouter_ssh.acc", "router", "true"),
+					resource.TestCheckResourceAttr("dreamrouter_ssh.acc", "devices", "true"),
+				),
+			},
+			{
+				Config: cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("dreamrouter_ssh.acc", plancheck.ResourceActionNoop),
+				}},
+			},
+			{ResourceName: "dreamrouter_ssh.acc", ImportState: true, ImportStateId: "ssh", ImportStateVerify: true},
+		},
+	})
+}

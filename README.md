@@ -13,6 +13,7 @@ Terraform or OpenTofu:
   address.
 - **Port forwarding** (`dreamrouter_port_forward`): ports opened to the internet and
   forwarded to a device on your network.
+- **SSH** (`dreamrouter_ssh`): SSH to the router and to adopted devices, on or off.
 - Data sources for the router's DNS names (`dreamrouter_dns_records`), networks
   (`dreamrouter_networks`), current DHCP leases (`dreamrouter_leases`), devices
   (`dreamrouter_clients`), port forwards (`dreamrouter_port_forwards`) and the router's
@@ -413,6 +414,26 @@ them before applying:
 Changes made in the web UI are put back on the next apply, a rule deleted there is created
 again, and rules made in the web UI can be imported by name:
 `terraform import dreamrouter_port_forward.web web`.
+
+## Resource: `dreamrouter_ssh`
+
+The router's two SSH settings: SSH to **the router itself** (UniFi OS: Control Plane →
+Console → SSH) and SSH to **adopted devices** such as access points (Network: Device SSH
+Authentication).
+
+```hcl
+resource "dreamrouter_ssh" "this" {
+  router  = false   # leave out to leave this setting alone
+  devices = true
+}
+```
+
+- There is one per router. Destroying it leaves SSH as it is.
+- Passwords aren't managed: turning router SSH on keeps the root password set before.
+- If a setting is changed in the web UI, the next apply sets it back.
+- Device SSH is only written when it changes: every write makes the router issue its
+  devices a new internal API token.
+- Import the current settings with `terraform import dreamrouter_ssh.this ssh`.
 
 ## Data source: `dreamrouter_dns_records`
 
