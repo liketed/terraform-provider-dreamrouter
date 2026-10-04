@@ -181,7 +181,7 @@ func (p *dreamRouterProvider) Configure(ctx context.Context, req provider.Config
 }
 
 func (p *dreamRouterProvider) Resources(context.Context) []func() resource.Resource {
-	return []func() resource.Resource{newRecordResource, newReservationResource, newHostResource, newNetworkDHCPResource, newClientBlockResource, newPortForwardResource, newSSHResource}
+	return []func() resource.Resource{newRecordResource, newReservationResource, newHostResource, newNetworkDHCPResource, newClientBlockResource, newPortForwardResource, newSSHResource, newNetworkResource, newWiFiResource}
 }
 
 func (p *dreamRouterProvider) DataSources(context.Context) []func() datasource.DataSource {

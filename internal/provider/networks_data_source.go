@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"github.com/liketed/dreamrouter-go/unifi"
 	"sort"
 	"strings"
 
@@ -107,7 +108,7 @@ func (d *networksDataSource) Read(ctx context.Context, req datasource.ReadReques
 		}
 		cfg.Networks = append(cfg.Networks, networkModel{
 			ID: types.StringValue(n.ID), Name: types.StringValue(n.Name), Purpose: types.StringValue(n.Purpose),
-			Subnet: types.StringValue(n.Subnet), VLAN: types.StringValue(n.VLAN), DHCPEnabled: types.BoolValue(n.DHCPEnabled),
+			Subnet: types.StringValue(n.Subnet), VLAN: types.StringValue(vlanText(n)), DHCPEnabled: types.BoolValue(n.DHCPEnabled),
 			DHCPStart: types.StringValue(n.DHCPStart), DHCPStop: types.StringValue(n.DHCPStop), DomainName: types.StringValue(n.DomainName),
 		})
 	}
@@ -116,4 +117,12 @@ func (d *networksDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &cfg)...)
+}
+
+// vlanText is a network's VLAN ID as text, empty for the untagged LAN.
+func vlanText(n unifi.Network) string {
+	if !n.VLANEnabled || n.VLAN == 0 {
+		return ""
+	}
+	return fmt.Sprint(int(n.VLAN))
 }

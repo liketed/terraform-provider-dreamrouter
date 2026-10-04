@@ -566,3 +566,51 @@ resource "dreamrouter_ssh" "acc" {
 		},
 	})
 }
+
+// TestAccNetwork creates a test VLAN network (VLAN 39, 192.168.39.0/24),
+// changes its DNS servers, imports it and deletes it. No Wi-Fi network is
+// attached, so the access points aren't affected.
+func TestAccNetwork(t *testing.T) {
+	cfg := func(dns string) string {
+		return `
+provider "dreamrouter" {}
+resource "dreamrouter_network" "acc" {
+  name        = "acc-test-net"
+  vlan        = 39
+  subnet      = "192.168.39.1/24"
+  dns_servers = ` + dns + `
+}
+`
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		CheckDestroy: func(*terraform.State) error {
+			nets, err := accClient(t).ListNetworks(context.Background())
+			if err != nil {
+				return err
+			}
+			for _, n := range nets {
+				if n.Name == "acc-test-net" {
+					return fmt.Errorf("test network left on the router")
+				}
+			}
+			return nil
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(`["94.140.14.15", "94.140.15.16"]`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("dreamrouter_network.acc", "dhcp_start", "192.168.39.6"),
+					resource.TestCheckResourceAttr("dreamrouter_network.acc", "dns_servers.1", "94.140.15.16"),
+				),
+			},
+			{
+				Config: cfg(`["94.140.14.15"]`),
+				Check:  resource.TestCheckResourceAttr("dreamrouter_network.acc", "dns_servers.#", "1"),
+			},
+			{ResourceName: "dreamrouter_network.acc", ImportState: true, ImportStateId: "acc-test-net", ImportStateVerify: true,
+				ImportStateVerifyIgnore: []string{"dns_servers"}},
+		},
+	})
+}

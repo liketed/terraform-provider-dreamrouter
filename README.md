@@ -15,6 +15,8 @@ Terraform or OpenTofu:
 - **Port forwarding** (`dreamrouter_port_forward`): ports opened to the internet and
   forwarded to a device on your network.
 - **SSH** (`dreamrouter_ssh`): SSH to the router and to adopted devices, on or off.
+- **Networks and Wi-Fi networks** (`dreamrouter_network`, `dreamrouter_wifi`): e.g. a Wi-Fi
+  network for children with its own DNS servers.
 - Data sources for the router's DNS names (`dreamrouter_dns_records`), networks
   (`dreamrouter_networks`), current DHCP leases (`dreamrouter_leases`), devices
   (`dreamrouter_clients`), port forwards (`dreamrouter_port_forwards`) and the router's
@@ -380,6 +382,53 @@ resource "dreamrouter_network_dhcp" "lan" {
 - Manage each network from one `dreamrouter_network_dhcp` resource only. Drift (e.g. a
   boot server changed in the web UI) is set back. Import by network name:
   `terraform import dreamrouter_network_dhcp.lan Default`.
+
+## Resources: `dreamrouter_network` and `dreamrouter_wifi`
+
+A network is a VLAN with its own subnet and DHCP (and so its own DNS servers); a Wi-Fi
+network's devices join one network. Together they give a group of devices different DNS,
+for example AdGuard DNS Family for children:
+
+```hcl
+resource "dreamrouter_network" "kids" {
+  name        = "Kids"
+  vlan        = 30
+  subnet      = "192.168.30.1/24"                # the router's address on it
+  dns_servers = ["94.140.14.15", "94.140.15.16"] # AdGuard DNS Family
+}
+
+variable "kids_wifi_password" {
+  type      = string
+  sensitive = true
+}
+
+resource "dreamrouter_wifi" "kids" {
+  name       = "home-kids"
+  password   = var.kids_wifi_password
+  network_id = dreamrouter_network.kids.id
+  # bands = ["2g", "5g", "6g"]; hidden = true; enabled = false
+}
+```
+
+- **Network:** `vlan` (2–4094) and `subnet` can't be changed in place; changing them
+  replaces the network. `dhcp_start`/`dhcp_stop` default to `.6` and the last address but
+  one. `dns_servers` left out isn't managed here (so `dreamrouter_network_dhcp` can manage
+  it instead). The provider checks what the router doesn't: a unique name and a private
+  subnet (the router accepts e.g. `8.8.8.1/24`, which would hide those internet addresses).
+  A network still used by a Wi-Fi network isn't deleted.
+- **Wi-Fi network:** WPA2/WPA3 with a password, on all access points; `bands` defaults to
+  2.4 and 5 GHz. The provider refuses duplicate names (the router accepts them, even the
+  name of an existing Wi-Fi network) and passwords the router accepts but devices can't
+  use. A password changed in the web UI is set back.
+- **Every change to a Wi-Fi network briefly disconnects all Wi-Fi devices**, on every Wi-Fi
+  network, while the access points apply it (about 15–30 seconds); the provider warns
+  each time. It refuses to disable or delete the Wi-Fi network the machine running
+  Terraform is connected through.
+- **DNS from DHCP is a default, not a lock:** a device can still use other DNS (set by
+  hand, "Private DNS" on Android, DNS over HTTPS in browsers, iCloud Private Relay).
+- Import by name: `terraform import dreamrouter_network.kids Kids`,
+  `terraform import dreamrouter_wifi.kids home-kids`. The router's own network (Default)
+  can't be imported as a `dreamrouter_network`; use `dreamrouter_network_dhcp` for it.
 
 ## Resource: `dreamrouter_client_block`
 
