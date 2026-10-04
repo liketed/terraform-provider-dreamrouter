@@ -335,6 +335,9 @@ resource "dreamrouter_network_dhcp" "lan" {
 `, file)
 }
 
+// TestAccNetworkDHCP changes network boot on the router's default network and
+// ends with it OFF. Don't run it against a network whose network boot is in
+// use: destroying a dreamrouter_network_dhcp turns network boot off.
 func TestAccNetworkDHCP(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { accPreCheck(t) },

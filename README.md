@@ -7,8 +7,9 @@ Terraform or OpenTofu:
   **A, AAAA, CNAME, MX, NS, SRV and TXT**.
 - **DHCP reservations** (`dreamrouter_dhcp_reservation`): fixed IP addresses for devices.
 - **Hosts** (`dreamrouter_host`): a device's fixed IP and its DNS name, managed together.
-- **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE) and the TFTP
-  server handed out on an existing network.
+- **Network DHCP settings** (`dreamrouter_network_dhcp`): network boot (PXE), the TFTP
+  server, and the DNS servers, lease time, NTP servers and domain name handed out on an
+  existing network.
 - **Blocked devices** (`dreamrouter_client_block`): devices that can't connect, by MAC
   address.
 - **Port forwarding** (`dreamrouter_port_forward`): ports opened to the internet and
@@ -321,8 +322,9 @@ back on, and a removed reservation is recreated. Import by host name (or MAC add
 
 ## Resource: `dreamrouter_network_dhcp`
 
-DHCP settings of an existing network: network boot (PXE) and the TFTP server. It never
-creates or deletes networks.
+DHCP settings of an existing network: network boot (PXE), the TFTP server, and the DNS
+servers, lease time, NTP servers and domain name handed out. It never creates or deletes
+networks.
 
 ```hcl
 resource "dreamrouter_network_dhcp" "lan" {
@@ -334,6 +336,12 @@ resource "dreamrouter_network_dhcp" "lan" {
   }
 
   tftp_server = "tftp.home.internal"    # optional (DHCP option 66)
+
+  # Optional; each one left out is left alone.
+  dns_servers = ["192.168.1.1", "1.1.1.1"]  # [] hands out the router itself (the default)
+  lease_time  = 43200                       # seconds; default 86400
+  ntp_servers = ["192.168.1.1"]             # [] hands out none (the default)
+  domain_name = "home.internal"             # default "localdomain"
 }
 ```
 
@@ -343,6 +351,10 @@ resource "dreamrouter_network_dhcp" "lan" {
 | `boot.server` | with `boot` | IPv4 address of the boot server. |
 | `boot.file` | with `boot` | File a network-booting machine should load; may include a path. No spaces or commas. |
 | `tftp_server` | no | TFTP server name or IP handed out as DHCP option 66 (e.g. for IP phones). |
+| `dns_servers` | no | Up to 4 IPv4 addresses; `[]` hands out the router itself. Left out: not managed. |
+| `lease_time` | no | Seconds, 120 (2 minutes) to 31536000 (a year). Left out: not managed. |
+| `ntp_servers` | no | Up to 2 IPv4 addresses (DHCP option 42); `[]` hands out none. Left out: not managed. |
+| `domain_name` | no | Search domain handed out, e.g. `home.internal`. Left out: not managed. |
 
 - These are the web UI's **Network Boot**, **Network Boot Server IP**, **Network Boot
   Filename** and **TFTP Server** settings. Devices pick up changes the next time they ask
@@ -353,7 +365,14 @@ resource "dreamrouter_network_dhcp" "lan" {
   the boot server and stops handing out the TFTP server. (The router doesn't allow
   clearing a stored boot file, so that stays, inactive.)
 - The router accepts values that would break its dnsmasq configuration (commas, spaces,
-  a host name as the server); the provider rejects them at plan time.
+  a host name as the server); the provider rejects them at plan time. The same goes for
+  DNS servers: the router stores anything (host names, several in one field, IPv6,
+  gaps), and it accepts lease times down to 0 seconds (dnsmasq raises anything under 2
+  minutes to 2 minutes).
+- **`dns_servers`, `lease_time`, `ntp_servers` and `domain_name` are only managed when
+  set**, so adding the resource (or upgrading the provider) never changes DHCP options you
+  haven't put in the configuration. Destroying the resource puts the managed ones back
+  to the router's defaults. Devices pick up changes when they renew their lease.
 - **One boot file per network, and no per-device boot settings**: the router only exposes
   a single file per network, and reservations hold just a MAC address and IP. For
   different behaviour per machine (or UEFI vs BIOS), hand out a boot loader such as iPXE

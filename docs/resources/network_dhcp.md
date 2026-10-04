@@ -3,12 +3,12 @@
 page_title: "dreamrouter_network_dhcp Resource - Dream Router"
 subcategory: ""
 description: |-
-  DHCP settings of an existing network (Settings → Networks): network boot (PXE) and the TFTP server. The resource never creates or deletes networks; destroying it turns network boot off, clears the boot server and stops handing out the TFTP server. Manage each network from one resource only.
+  DHCP settings of an existing network (Settings → Networks): network boot (PXE), the TFTP server, and the DNS servers, lease time, NTP servers and domain name handed out. The resource never creates or deletes networks. dns_servers, lease_time, ntp_servers and domain_name are only managed when set; leave one out to leave it alone. Destroying the resource turns network boot off, clears the boot server, stops handing out the TFTP server, and puts the managed DHCP options back to the router's defaults. Manage each network from one resource only.
 ---
 
 # dreamrouter_network_dhcp (Resource)
 
-DHCP settings of an existing network (Settings → Networks): network boot (PXE) and the TFTP server. The resource never creates or deletes networks; destroying it turns network boot off, clears the boot server and stops handing out the TFTP server. Manage each network from one resource only.
+DHCP settings of an existing network (Settings → Networks): network boot (PXE), the TFTP server, and the DNS servers, lease time, NTP servers and domain name handed out. The resource never creates or deletes networks. dns_servers, lease_time, ntp_servers and domain_name are only managed when set; leave one out to leave it alone. Destroying the resource turns network boot off, clears the boot server, stops handing out the TFTP server, and puts the managed DHCP options back to the router's defaults. Manage each network from one resource only.
 
 ## Example Usage
 
@@ -25,6 +25,12 @@ resource "dreamrouter_network_dhcp" "lan" {
 
   # Optional: a TFTP server handed out as DHCP option 66, e.g. for IP phones.
   tftp_server = "tftp.home.internal"
+
+  # Optional DHCP options; each one left out is left alone.
+  dns_servers = ["192.168.1.1", "1.1.1.1"] # [] hands out the router itself
+  lease_time  = 43200                      # seconds (12 hours); default 86400
+  ntp_servers = ["192.168.1.1"]
+  domain_name = "home.internal"
 }
 ```
 
@@ -38,6 +44,10 @@ resource "dreamrouter_network_dhcp" "lan" {
 ### Optional
 
 - `boot` (Attributes) Network boot (PXE): which server and file a network-booting machine should use. Omit it to keep network boot off. When turned off, the router keeps the last server and file stored (it doesn't allow clearing a boot file), as the web UI does. (see [below for nested schema](#nestedatt--boot))
+- `dns_servers` (List of String) DNS servers handed out, up to four IPv4 addresses. An empty list hands out the router itself (the default). Leave it out to leave the setting alone.
+- `domain_name` (String) Domain name handed out as the search domain, e.g. "home.internal"; the router's default is "localdomain". Leave it out to leave the setting alone.
+- `lease_time` (Number) DHCP lease time in seconds, from 120 (2 minutes) to 31536000 (a year); the router's default is 86400 (a day). Leave it out to leave the setting alone.
+- `ntp_servers` (List of String) NTP servers handed out (DHCP option 42), up to two IPv4 addresses. An empty list hands out none (the default). Leave it out to leave the setting alone.
 - `tftp_server` (String) TFTP server host name or IP address handed out as DHCP option 66, e.g. for IP phones. Independent of boot: it is handed out whenever set. Omit it to hand out none.
 
 ### Read-Only
