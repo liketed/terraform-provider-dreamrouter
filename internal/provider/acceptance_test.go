@@ -614,3 +614,44 @@ resource "dreamrouter_network" "acc" {
 		},
 	})
 }
+
+// TestAccWAN manages Internet 2 with the settings it already has (eir's
+// PPPoE login, VLAN 10, Port 3), so nothing on the router changes; it also
+// reads the WAN and port data sources. Destroying leaves the connection.
+func TestAccWAN(t *testing.T) {
+	cfg := `
+provider "dreamrouter" {}
+resource "dreamrouter_wan" "acc" {
+  name     = "Internet 2"
+  type     = "pppoe"
+  username = "eir@eir.ie"
+  password = "broadband1"
+  vlan     = 10
+  port     = "Port 3"
+}
+data "dreamrouter_wans" "all" {}
+data "dreamrouter_ports" "all" {}
+`
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("dreamrouter_wan.acc", "port", "Port 3"),
+					resource.TestCheckResourceAttr("data.dreamrouter_wans.all", "wans.#", "2"),
+					resource.TestCheckResourceAttrSet("data.dreamrouter_ports.all", "ports.0.interface"),
+				),
+			},
+			{
+				Config: cfg,
+				ConfigPlanChecks: resource.ConfigPlanChecks{PreApply: []plancheck.PlanCheck{
+					plancheck.ExpectResourceAction("dreamrouter_wan.acc", plancheck.ResourceActionNoop),
+				}},
+			},
+			{ResourceName: "dreamrouter_wan.acc", ImportState: true, ImportStateId: "Internet 2", ImportStateVerify: true,
+				ImportStateVerifyIgnore: []string{"force_port"}},
+		},
+	})
+}

@@ -57,6 +57,7 @@ output "firmware" {
 - `wan_ip` (String) The public (WAN) IP address.
 - `wan_link_mbps` (Number) The WAN port's link speed in Mbit/s.
 - `wan_up` (Boolean) Whether the (first) WAN link is up.
+- `wans` (Attributes List) Every internet connection's live state (the wan_* attributes cover only the first). (see [below for nested schema](#nestedatt--wans))
 - `wifi_clients` (Number) Wi-Fi clients connected now.
 - `wired_clients` (Number) Wired clients connected now.
 
@@ -74,3 +75,14 @@ Read-Only:
 - `upgradable` (Boolean) Whether a firmware update is available.
 - `upgrade_to` (String) The available firmware version; empty if none.
 - `version` (String) Firmware version.
+
+
+<a id="nestedatt--wans"></a>
+### Nested Schema for `wans`
+
+Read-Only:
+
+- `interface` (String) The port's interface, e.g. "eth3".
+- `ip` (String) Its public address; empty if down.
+- `network_group` (String) "WAN" (Internet 1) or "WAN2" (Internet 2).
+- `up` (Boolean) Whether it is up.

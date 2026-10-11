@@ -57,6 +57,14 @@ type statusModel struct {
 	SpeedTestRun    types.String        `tfsdk:"speedtest_run"`
 	SpeedTestDown   types.Float64       `tfsdk:"speedtest_download_mbps"`
 	SpeedTestUp     types.Float64       `tfsdk:"speedtest_upload_mbps"`
+	WANs            []statusWANModel    `tfsdk:"wans"`
+}
+
+type statusWANModel struct {
+	NetworkGroup types.String `tfsdk:"network_group"`
+	Interface    types.String `tfsdk:"interface"`
+	Up           types.Bool   `tfsdk:"up"`
+	IP           types.String `tfsdk:"ip"`
 }
 
 func newStatusDataSource() datasource.DataSource { return &statusDataSource{} }
@@ -123,6 +131,16 @@ func (d *statusDataSource) Schema(_ context.Context, _ datasource.SchemaRequest,
 			"speedtest_run":           str("When the last speed test ran, as an RFC 3339 timestamp (UTC); empty if never."),
 			"speedtest_download_mbps": flt("Download speed in the last speed test, in Mbit/s; 0 if never run."),
 			"speedtest_upload_mbps":   flt("Upload speed in the last speed test, in Mbit/s; 0 if never run."),
+			"wans": schema.ListNestedAttribute{
+				Computed:    true,
+				Description: "Every internet connection's live state (the wan_* attributes cover only the first).",
+				NestedObject: schema.NestedAttributeObject{Attributes: map[string]schema.Attribute{
+					"network_group": str(`"WAN" (Internet 1) or "WAN2" (Internet 2).`),
+					"interface":     str(`The port's interface, e.g. "eth3".`),
+					"up":            boo("Whether it is up."),
+					"ip":            str("Its public address; empty if down."),
+				}},
+			},
 		},
 	}
 }
@@ -161,6 +179,11 @@ func (d *statusDataSource) Read(ctx context.Context, _ datasource.ReadRequest, r
 		UpdateAvailable: types.BoolValue(s.UpdateAvailable), Devices: []statusDeviceModel{},
 		SpeedTestRun:  types.StringValue(""),
 		SpeedTestDown: types.Float64Value(s.SpeedTest.DownloadMbps), SpeedTestUp: types.Float64Value(s.SpeedTest.UploadMbps),
+	}
+	m.WANs = []statusWANModel{}
+	for _, l := range s.WANs {
+		m.WANs = append(m.WANs, statusWANModel{NetworkGroup: types.StringValue(l.NetworkGroup), Interface: types.StringValue(l.Interface),
+			Up: types.BoolValue(l.Up), IP: types.StringValue(l.IP)})
 	}
 	if !s.SpeedTest.Run.IsZero() {
 		m.SpeedTestRun = types.StringValue(s.SpeedTest.Run.UTC().Format(time.RFC3339))

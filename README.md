@@ -17,6 +17,9 @@ Terraform or OpenTofu:
 - **SSH** (`dreamrouter_ssh`): SSH to the router and to adopted devices, on or off.
 - **Networks and Wi-Fi networks** (`dreamrouter_network`, `dreamrouter_wifi`): e.g. a Wi-Fi
   network for children with its own DNS servers.
+- **Internet connections** (`dreamrouter_wan`): PPPoE login, VLAN, DHCP or static, DNS, and the
+  port each connection uses, with automatic rollback; data sources `dreamrouter_wans` and
+  `dreamrouter_ports`.
 - Data sources for the router's DNS names (`dreamrouter_dns_records`), networks
   (`dreamrouter_networks`), current DHCP leases (`dreamrouter_leases`), devices
   (`dreamrouter_clients`), port forwards (`dreamrouter_port_forwards`) and the router's
@@ -429,6 +432,39 @@ resource "dreamrouter_wifi" "kids" {
 - Import by name: `terraform import dreamrouter_network.kids Kids`,
   `terraform import dreamrouter_wifi.kids home-kids`. The router's own network (Default)
   can't be imported as a `dreamrouter_network`; use `dreamrouter_network_dhcp` for it.
+
+## Resource: `dreamrouter_wan`
+
+The settings of an existing internet connection ("Internet 1", "Internet 2"), and
+optionally the port it uses:
+
+```hcl
+resource "dreamrouter_wan" "failover" {
+  name     = "Internet 2"
+  type     = "pppoe"            # or "dhcp", or "static" with ip = "203.0.113.10/24" and gateway
+  username = "eir@eir.ie"
+  password = var.eir_password   # sensitive
+  vlan     = 10                 # left out: no VLAN
+  port     = "Port 3"           # name, number or interface; left out: not managed
+  # dns_servers = ["1.1.1.1"]   # the router's own DNS; left out: the provider's
+}
+```
+
+- **Changing a working connection makes it reconnect.** The provider gives the router 20
+  seconds, then watches for up to 2 minutes; **if the connection doesn't come back, it puts
+  the previous settings (or ports) back** and the apply fails with that message.
+- `port` moves the connection; the port it leaves becomes a LAN port. The web UI numbers
+  ports from 1 (Port 3 is `eth2`). The provider refuses a port with LAN devices on it
+  (`force_port = true` to insist), a port another connection uses, and the port the machine
+  running Terraform is connected to.
+- **Review plans for the primary connection carefully**: it carries your internet, and a
+  wrong value takes it down until the rollback. The router's connections can't be deleted,
+  so destroying the resource leaves the connection as it is.
+- A password or port changed in the web UI is set back. Import by name:
+  `terraform import dreamrouter_wan.failover "Internet 2"`.
+- Data sources: `dreamrouter_wans` (each connection's port, type, login, VLAN, up/down, IP and
+  role) and `dreamrouter_ports` (each port's interface, media, link, speed and role).
+  `dreamrouter_status` also has `wans`, every connection's live state.
 
 ## Resource: `dreamrouter_client_block`
 
