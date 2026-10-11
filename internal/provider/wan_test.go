@@ -195,3 +195,71 @@ func TestWANResourceValidation(t *testing.T) {
 		t.Fatalf("invalid settings reached the router: %v", n)
 	}
 }
+
+func TestWANResourcePrimary(t *testing.T) {
+	r := wanTestRouter(t)
+	r.SetPortLink("eth4", true) // the second line, on the SFP+ port here
+	cfg := func(primary1, primary2 string) string {
+		return fakeProviderConfig(r) + `
+resource "dreamrouter_wan" "vodafone" {
+  name     = "Internet 1"
+  type     = "pppoe"
+  username = "user@isp.example"
+  password = "isp-password"
+  vlan     = 10
+  primary  = ` + primary1 + `
+}
+resource "dreamrouter_wan" "eir" {
+  name    = "Internet 2"
+  type    = "dhcp"
+  primary = ` + primary2 + `
+}
+`
+	}
+	resource.UnitTest(t, resource.TestCase{
+		ProtoV6ProviderFactories: providerFactories,
+		Steps: []resource.TestStep{
+			{Config: cfg("true", "false")},
+			{
+				// Switch: eir becomes primary, Vodafone its failover.
+				Config: fakeProviderConfig(r) + `
+resource "dreamrouter_wan" "vodafone" {
+  name     = "Internet 1"
+  type     = "pppoe"
+  username = "user@isp.example"
+  password = "isp-password"
+  vlan     = 10
+}
+resource "dreamrouter_wan" "eir" {
+  name    = "Internet 2"
+  type    = "dhcp"
+  primary = true
+}
+`,
+				Check: func(*terraform.State) error {
+					if n := r.Network("Internet 2"); n["wan_failover_priority"] != 1.0 || n["wan_load_balance_type"] == "failover-only" {
+						return fmt.Errorf("Internet 2 not primary: %v", n)
+					}
+					if n := r.Network("Internet 1"); n["wan_load_balance_type"] != "failover-only" {
+						return fmt.Errorf("Internet 1 not failover: %v", n)
+					}
+					return nil
+				},
+			},
+			{
+				// false on the primary only checks: it doesn't switch.
+				Config:      cfg("null", "false"),
+				ExpectError: regexp.MustCompile(`Internet 2 is the primary connection; to switch, set primary = true`),
+			},
+			{
+				// A primary that carries no traffic is switched back.
+				PreConfig:   func() { r.BlockTraffic("WAN") },
+				Config:      cfg("true", "null"),
+				ExpectError: regexp.MustCompile(`(?s)Internet 1 didn't carry traffic within 300ms; switched\s+back to Internet 2`),
+			},
+		},
+	})
+	if n := r.Network("Internet 2"); n["wan_failover_priority"] != 1.0 {
+		t.Fatalf("not switched back to Internet 2: %v", n)
+	}
+}

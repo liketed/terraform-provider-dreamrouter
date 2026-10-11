@@ -447,6 +447,7 @@ resource "dreamrouter_wan" "failover" {
   vlan     = 10                 # left out: no VLAN
   port     = "Port 3"           # name, number or interface; left out: not managed
   # dns_servers = ["1.1.1.1"]   # the router's own DNS; left out: the provider's
+  # primary  = true             # make this the primary connection
 }
 ```
 
@@ -460,6 +461,11 @@ resource "dreamrouter_wan" "failover" {
 - **Review plans for the primary connection carefully**: it carries your internet, and a
   wrong value takes it down until the rollback. The router's connections can't be deleted,
   so destroying the resource leaves the connection as it is.
+- `primary = true` makes the connection the primary one: new traffic goes out through it
+  and the previous primary becomes its failover. The provider refuses a connection that is
+  down, checks that traffic really moves, and switches back if it doesn't within 2 minutes.
+  Set it on one connection only; `primary = false` only checks (it doesn't switch away).
+  Open connections break and reconnect, and the public IP changes.
 - A password or port changed in the web UI is set back. Import by name:
   `terraform import dreamrouter_wan.failover "Internet 2"`.
 - Data sources: `dreamrouter_wans` (each connection's port, type, login, VLAN, up/down, IP and

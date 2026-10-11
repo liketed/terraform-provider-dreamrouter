@@ -154,7 +154,7 @@ func (d *wansDataSource) Read(ctx context.Context, _ datasource.ReadRequest, res
 			}
 		}
 		switch {
-		case w.FailoverPriority == 1 || (w.FailoverPriority == 0 && w.NetworkGroup == "WAN"):
+		case w.IsPrimary() || (w.FailoverPriority == 0 && w.NetworkGroup == "WAN"):
 			e.Role = types.StringValue("primary")
 		case w.LoadBalanceType == "failover-only":
 			e.Role = types.StringValue("failover")

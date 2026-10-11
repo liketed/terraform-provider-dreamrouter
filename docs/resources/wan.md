@@ -26,6 +26,7 @@ resource "dreamrouter_wan" "failover" {
   password = var.eir_password
   vlan     = 10
   port     = "Port 3"
+  # primary = true   # switch traffic to this line
 }
 ```
 
@@ -45,6 +46,7 @@ resource "dreamrouter_wan" "failover" {
 - `ip` (String) Static address with prefix, e.g. "203.0.113.10/24"; required for static.
 - `password` (String, Sensitive) PPPoE password; required for pppoe. Changed in the web UI, it is set back.
 - `port` (String) The port the connection uses: its name ("Port 3", "SFP+ 1"), number ("3") or interface ("eth2"). The port it leaves becomes a LAN port. Left out: not managed.
+- `primary` (Boolean) true makes this the primary connection: new traffic goes out through it and the previous primary becomes its failover. The provider checks that traffic really moves and switches back if not. Set it on one connection only; false only checks (switch by setting true on the other connection). Left out: not managed.
 - `username` (String) PPPoE username; required for pppoe.
 - `vlan` (Number) VLAN ID the provider uses, 1 to 4094 (e.g. 10 on Irish fibre lines). Left out: no VLAN.
 

@@ -11,4 +11,5 @@ resource "dreamrouter_wan" "failover" {
   password = var.eir_password
   vlan     = 10
   port     = "Port 3"
+  # primary = true   # switch traffic to this line
 }

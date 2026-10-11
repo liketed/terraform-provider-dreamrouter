@@ -53,6 +53,7 @@ type wanModel struct {
 	Gateway    types.String `tfsdk:"gateway"`
 	Port       types.String `tfsdk:"port"`
 	ForcePort  types.Bool   `tfsdk:"force_port"`
+	Primary    types.Bool   `tfsdk:"primary"`
 }
 
 func newWANResource() resource.Resource { return &wanResource{} }
@@ -116,6 +117,13 @@ func (r *wanResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 				Optional: true,
 				Description: `The port the connection uses: its name ("Port 3", "SFP+ 1"), number ("3") or interface ("eth2"). ` +
 					`The port it leaves becomes a LAN port. Left out: not managed.`,
+			},
+			"primary": schema.BoolAttribute{
+				Optional: true,
+				Description: "true makes this the primary connection: new traffic goes out through it and the previous " +
+					"primary becomes its failover. The provider checks that traffic really moves and switches back if not. " +
+					"Set it on one connection only; false only checks (switch by setting true on the other connection). " +
+					"Left out: not managed.",
 			},
 			"force_port": schema.BoolAttribute{
 				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
@@ -197,7 +205,10 @@ func (r *wanResource) ValidateConfig(ctx context.Context, req resource.ValidateC
 func wanState(w unifi.WAN, ports []unifi.Port, prev wanModel) wanModel {
 	m := wanModel{ID: types.StringValue(w.ID), Name: prev.Name, Type: types.StringValue(w.Type),
 		Username: types.StringNull(), Password: types.StringNull(), VLAN: types.Int64Null(), DNSServers: types.ListNull(types.StringType),
-		IP: types.StringNull(), Gateway: types.StringNull(), Port: types.StringNull(), ForcePort: prev.ForcePort}
+		IP: types.StringNull(), Gateway: types.StringNull(), Port: types.StringNull(), ForcePort: prev.ForcePort, Primary: types.BoolNull()}
+	if !prev.Primary.IsNull() {
+		m.Primary = types.BoolValue(w.IsPrimary())
+	}
 	if m.ForcePort.IsNull() || m.ForcePort.IsUnknown() {
 		m.ForcePort = types.BoolValue(false)
 	}
@@ -353,6 +364,11 @@ func (r *wanResource) set(ctx context.Context, plan wanModel) (wanModel, error) 
 			return wanModel{}, err
 		}
 	}
+	if !plan.Primary.IsNull() {
+		if err := r.setPrimary(ctx, old.ID, plan.Primary.ValueBool()); err != nil {
+			return wanModel{}, err
+		}
+	}
 	w, ports, _, err := r.find(ctx, old.ID)
 	if err != nil {
 		return wanModel{}, err
@@ -414,7 +430,15 @@ func (r *wanResource) movePort(ctx context.Context, w unifi.WAN, ports []unifi.P
 	if err := r.data.client.SetPortRoles(ctx, roles); err != nil {
 		return err
 	}
-	if linkUp(links, "WAN") && !r.waitUp(ctx, "WAN") {
+	primaryGroup := "WAN"
+	if wans, err := r.data.client.ListWANs(ctx); err == nil {
+		for _, o := range wans {
+			if o.IsPrimary() {
+				primaryGroup = o.NetworkGroup
+			}
+		}
+	}
+	if linkUp(links, primaryGroup) && !r.waitUp(ctx, primaryGroup) {
 		if err := r.data.client.SetPortRoles(ctx, oldRoles); err != nil {
 			return fmt.Errorf("the primary connection didn't come back within %s, and moving the ports back failed: %w", wanWait.timeout, err)
 		}
@@ -488,4 +512,75 @@ func (r *wanResource) ImportState(ctx context.Context, req resource.ImportStateR
 		}
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)
+}
+
+// setPrimary makes the connection the primary one (want true), checking that
+// traffic really goes out through it and switching back if not; want false
+// only checks it isn't primary.
+func (r *wanResource) setPrimary(ctx context.Context, id string, want bool) error {
+	wans, err := r.data.client.ListWANs(ctx)
+	if err != nil {
+		return err
+	}
+	var w, old unifi.WAN
+	for _, o := range wans {
+		if o.ID == id {
+			w = o
+		}
+		if o.IsPrimary() {
+			old = o
+		}
+	}
+	if w.IsPrimary() == want {
+		return nil
+	}
+	if !want {
+		return fmt.Errorf("%s is the primary connection; to switch, set primary = true on the connection that should take over", w.Name)
+	}
+	_, links, err := r.data.client.Ports(ctx)
+	if err != nil {
+		return err
+	}
+	if !linkUp(links, w.NetworkGroup) {
+		return fmt.Errorf("%s is down; making it primary would leave the internet to the failover at best", w.Name)
+	}
+	if err := r.data.client.SetPrimaryWAN(ctx, w.ID); err != nil {
+		return err
+	}
+	if r.waitActive(ctx, w.NetworkGroup) {
+		return nil
+	}
+	if old.ID == "" {
+		return fmt.Errorf("%s didn't carry traffic within %s", w.Name, wanWait.timeout)
+	}
+	if err := r.data.client.SetPrimaryWAN(ctx, old.ID); err != nil {
+		return fmt.Errorf("%s didn't carry traffic within %s, and switching back to %s failed: %w", w.Name, wanWait.timeout, old.Name, err)
+	}
+	return fmt.Errorf("%s didn't carry traffic within %s; switched back to %s", w.Name, wanWait.timeout, old.Name)
+}
+
+// waitActive lets the router apply a change, then waits until traffic goes
+// out through the connection for group and the internet is reachable.
+func (r *wanResource) waitActive(ctx context.Context, group string) bool {
+	deadline := time.Now().Add(wanWait.timeout)
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(wanWait.settle):
+	}
+	for {
+		if active, err := r.data.client.ActiveWAN(ctx); err == nil && active == group {
+			if st, err := r.data.client.GetStatus(ctx); err == nil && st.Internet.Status == "ok" {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(wanWait.interval):
+		}
+	}
 }
