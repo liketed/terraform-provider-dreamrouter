@@ -17,6 +17,8 @@ Terraform or OpenTofu:
 - **SSH** (`dreamrouter_ssh`): SSH to the router and to adopted devices, on or off.
 - **Networks and Wi-Fi networks** (`dreamrouter_network`, `dreamrouter_wifi`): e.g. a Wi-Fi
   network for children with its own DNS servers.
+- **Static routes** (`dreamrouter_static_route`, data source `dreamrouter_static_routes`):
+  e.g. to a network behind another router on your LAN.
 - **Internet connections** (`dreamrouter_wan`): PPPoE login, VLAN, DHCP or static, DNS, and the
   port each connection uses, with automatic rollback; data sources `dreamrouter_wans` and
   `dreamrouter_ports`.
@@ -471,6 +473,32 @@ resource "dreamrouter_wan" "failover" {
 - Data sources: `dreamrouter_wans` (each connection's port, type, login, VLAN, up/down, IP and
   role) and `dreamrouter_ports` (each port's interface, media, link, speed and role).
   `dreamrouter_status` also has `wans`, every connection's live state.
+
+## Resource: `dreamrouter_static_route`
+
+A static route: traffic for `network` goes to `next_hop`, for example a second router on
+your LAN with its own network behind it.
+
+```hcl
+resource "dreamrouter_static_route" "cudy" {
+  name     = "cudy"
+  network  = "192.168.2.0/24"   # network form; not one of the router's own networks
+  next_hop = "192.168.1.4"      # a device on one of your networks
+  # distance = 1                # 1-255, lower wins
+  # enabled  = true
+}
+
+data "dreamrouter_static_routes" "all" {}   # every route, including ones made in the web UI
+```
+
+- The provider checks what the router doesn't: the next hop must be a device on one of your
+  networks (the router accepts unreachable next hops, and itself, which would loop), and
+  names are unique. The router refuses routes to its own networks, the same network twice
+  and default routes.
+- Changes made in the web UI are set back, and a route deleted there is created again.
+  Import by network, name or ID: `terraform import dreamrouter_static_route.cudy 192.168.2.0/24`.
+- The other router must let the traffic in (consumer routers often do NAT and block
+  incoming connections on their internet port).
 
 ## Resource: `dreamrouter_client_block`
 

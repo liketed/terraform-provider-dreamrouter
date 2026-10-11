@@ -655,3 +655,51 @@ data "dreamrouter_ports" "all" {}
 		},
 	})
 }
+
+// TestAccStaticRoute creates a temporary route to an unused network
+// (10.99.99.0/24 via 192.168.1.4), changes it, imports it and deletes it;
+// other routes are left alone.
+func TestAccStaticRoute(t *testing.T) {
+	cfg := func(distance int) string {
+		return fmt.Sprintf(`
+provider "dreamrouter" {}
+resource "dreamrouter_static_route" "acc" {
+  name     = "acc-test-route"
+  network  = "10.99.99.0/24"
+  next_hop = "192.168.1.4"
+  distance = %d
+}
+data "dreamrouter_static_routes" "all" {
+  depends_on = [dreamrouter_static_route.acc]
+}
+`, distance)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { accPreCheck(t) },
+		ProtoV6ProviderFactories: providerFactories,
+		CheckDestroy: func(*terraform.State) error {
+			routes, err := accClient(t).ListRoutes(context.Background())
+			if err != nil {
+				return err
+			}
+			for _, rt := range routes {
+				if rt.Name == "acc-test-route" {
+					return fmt.Errorf("test route left on the router")
+				}
+			}
+			return nil
+		},
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(1),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet("dreamrouter_static_route.acc", "id"),
+					resource.TestCheckTypeSetElemNestedAttrs("data.dreamrouter_static_routes.all", "routes.*",
+						map[string]string{"network": "10.99.99.0/24", "next_hop": "192.168.1.4"}),
+				),
+			},
+			{Config: cfg(20), Check: resource.TestCheckResourceAttr("dreamrouter_static_route.acc", "distance", "20")},
+			{ResourceName: "dreamrouter_static_route.acc", ImportState: true, ImportStateId: "10.99.99.0/24", ImportStateVerify: true},
+		},
+	})
+}
